@@ -7,6 +7,9 @@ from rich.progress import track
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
+# AIO: All in one format
+
+
 # scalling factors for physical units
 print("Default scaling factors: s_per_frame = 0.02, um_per_pixel = 0.117")
 # print("micron per pixel:")

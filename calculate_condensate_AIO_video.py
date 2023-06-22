@@ -10,8 +10,11 @@ from rich.progress import track
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
+# AIO: All in one format
+
+
 um_per_pixel = 0.117
-print("Choose the RNA AveProj_Simple Segmentation.tif files for processing:")
+print("Choose the Simple Segmentation.tif files for processing:")
 lst_fpath = list(fd.askopenfilenames())
 folder_save = dirname(lst_fpath[0])
 os.chdir(folder_save)
@@ -35,31 +38,31 @@ columns = [
 
 switch_plot = True  # a switch to turn off plotting
 plow = 0.05  # imshow intensity percentile
-phigh = 99
+phigh = 98
 
 
 ####################################
 # Functions
 def pltcontours(img, contours, fsave):
     global rescale_contrast, plow, phigh
-    plt.figure(dpi=300)
+    plt.figure(dpi=600)
     # Contrast stretching
     vmin, vmax = np.percentile(img, (plow, phigh))
     plt.imshow(img, cmap="gray", vmin=vmin, vmax=vmax)
     for cnt in contours:
         x = cnt[:, 0][:, 0]
         y = cnt[:, 0][:, 1]
-        plt.plot(x, y, "-", color="firebrick", linewidth=0.5)
+        plt.plot(x, y, "-", color="firebrick", linewidth=0.2)
         # still the last closing line will be missing, get it below
         xlast = [x[-1], x[0]]
         ylast = [y[-1], y[0]]
-        plt.plot(xlast, ylast, "-", color="firebrick", linewidth=0.5)
+        plt.plot(xlast, ylast, "-", color="firebrick", linewidth=0.2)
     plt.xlim(0, img.shape[0])
     plt.ylim(0, img.shape[1])
     plt.tight_layout()
     plt.axis("scaled")
     plt.axis("off")
-    plt.savefig(fsave, format="png", bbox_inches="tight", dpi=300)
+    plt.savefig(fsave, format="png", bbox_inches="tight", dpi=600)
     plt.close()
 
 
@@ -92,7 +95,7 @@ lst_rows_of_df = []
 print("Now Processing:", dirname(lst_fpath[0]))
 for fpath in track(lst_fpath):
     ilastik_output = imread(fpath)
-    img = imread(fpath[:-24] + ".tif")
+    video = imread(fpath[:-24] + ".tif")
     filename = basename(fpath)[:-24]
 
     mask_all_condensates = 2 - ilastik_output  # background label=2, condensate label=1
@@ -106,7 +109,7 @@ for fpath in track(lst_fpath):
     condensateID = 1
     for cnt in contours:
         # ignore contour if it's as large as the FOV, becuase cv2 recognizes the whole image as a contour
-        if cv2.contourArea(cnt) > 0.8 * img.shape[0] * img.shape[1]:
+        if cv2.contourArea(cnt) > 0.8 * video.shape[1] * video.shape[2]:
             continue
 
         # condensate center coordinates
