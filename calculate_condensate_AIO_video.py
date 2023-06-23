@@ -3,6 +3,7 @@ import os
 from os.path import join, dirname, basename
 import cv2
 import matplotlib.pyplot as plt
+import h5py  # video ilastik_output can only be exported as h5 files
 import numpy as np
 import pandas as pd
 from tkinter import filedialog as fd
@@ -14,14 +15,14 @@ pd.options.mode.chained_assignment = None  # default='warn'
 
 
 um_per_pixel = 0.117
-print("Choose the Simple Segmentation.tif files for processing:")
+print("Choose Simple Segmentation.h5 files for processing:")
 lst_fpath = list(fd.askopenfilenames())
 folder_save = dirname(lst_fpath[0])
 os.chdir(folder_save)
 
-# output data structure
+# output data structure, *for each FOV*
 columns = [
-    "filename",
+    "frame",
     "condensateID",
     "contour_coord",
     "center_x_pxl",
@@ -38,7 +39,7 @@ columns = [
 
 switch_plot = True  # a switch to turn off plotting
 plow = 0.05  # imshow intensity percentile
-phigh = 98
+phigh = 99
 
 
 ####################################
@@ -91,81 +92,87 @@ def cnt_to_list(cnt):
     return lst_cnt
 
 
-lst_rows_of_df = []
-print("Now Processing:", dirname(lst_fpath[0]))
-for fpath in track(lst_fpath):
-    ilastik_output = imread(fpath)
-    video = imread(fpath[:-24] + ".tif")
+for fpath in lst_fpath:
+    # video ilastik_output can only be exported as h5 files
+    ilastik_output = h5py.File(fpath)["exported_data"][:, :, :, 0]
+    video = imread(fpath[:-23] + ".tif")
     filename = basename(fpath)[:-24]
 
-    mask_all_condensates = 2 - ilastik_output  # background label=2, condensate label=1
-    if mask_all_condensates.sum() == 0:  # so no condensate
-        continue
-
-    # find contours coordinates in binary edge image. contours here is a list of np.arrays containing all coordinates of each individual edge/contour.
-    contours, _ = cv2.findContours(
-        mask_all_condensates, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE
-    )
-    condensateID = 1
-    for cnt in contours:
-        # ignore contour if it's as large as the FOV, becuase cv2 recognizes the whole image as a contour
-        if cv2.contourArea(cnt) > 0.8 * video.shape[1] * video.shape[2]:
+    lst_rows_of_df = []
+    for frame in track(range(video.shape[0]), description=basename(fpath)):
+        img = video[frame, :, :]
+        mask_all_condensates = (
+            2 - ilastik_output[frame, :, :]
+        )  # background label=2, condensate label=1
+        if mask_all_condensates.sum() == 0:  # so no condensate
             continue
 
-        # condensate center coordinates
-        M = cv2.moments(cnt)
-        if M["m00"] == 0:
-            continue
-        center_x_pxl = int(M["m10"] / M["m00"])
-        center_y_pxl = int(M["m01"] / M["m00"])
-        # condensate size
-        area_um2 = cv2.contourArea(cnt) * um_per_pixel**2
-        R_nm = np.sqrt(area_um2 / np.pi) * 1000
-        # aspect ratio
-        x, y, w, h = cv2.boundingRect(cnt)
-        aspect_ratio = float(w) / h
-        # extent
-        rect_area = w * h
-        contour_extent = float(cv2.contourArea(cnt)) / rect_area
-        # solidity
-        hull = cv2.convexHull(cnt)
-        hull_area = cv2.contourArea(hull)
-        contour_solidity = float(cv2.contourArea(cnt)) / hull_area
-        # intensities
-        mask_current_condensate = cnt_fill(img.shape, cnt)
-        mean_intensity = cv2.mean(img, mask=mask_current_condensate)[0]
-        _, max_intensity, _, max_location = cv2.minMaxLoc(
-            img, mask=mask_current_condensate
+        # find contours coordinates in binary edge image. contours here is a list of np.arrays containing all coordinates of each individual edge/contour.
+        contours, _ = cv2.findContours(
+            mask_all_condensates, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE
         )
+        condensateID = 1
+        for cnt in contours:
+            # ignore contour if it's as large as the FOV, becuase cv2 recognizes the whole image as a contour
+            if cv2.contourArea(cnt) > 0.8 * img.shape[0] * img.shape[1]:
+                continue
 
-        # Finally, add the new row to the list to form dataframe
-        new_row = [
-            filename,
-            condensateID,
-            cnt_to_list(cnt),
-            center_x_pxl,
-            center_y_pxl,
-            area_um2,
-            R_nm,
-            mean_intensity,
-            max_intensity,
-            max_location,
-            aspect_ratio,
-            contour_solidity,
-            contour_extent,
-        ]
-        lst_rows_of_df.append(new_row)
+            # condensate center coordinates
+            M = cv2.moments(cnt)
+            if M["m00"] == 0:
+                continue
+            center_x_pxl = int(M["m10"] / M["m00"])
+            center_y_pxl = int(M["m01"] / M["m00"])
+            # condensate size
+            area_um2 = cv2.contourArea(cnt) * um_per_pixel**2
+            R_nm = np.sqrt(area_um2 / np.pi) * 1000
+            # aspect ratio
+            x, y, w, h = cv2.boundingRect(cnt)
+            aspect_ratio = float(w) / h
+            # extent
+            rect_area = w * h
+            contour_extent = float(cv2.contourArea(cnt)) / rect_area
+            # solidity
+            hull = cv2.convexHull(cnt)
+            hull_area = cv2.contourArea(hull)
+            contour_solidity = float(cv2.contourArea(cnt)) / hull_area
+            # intensities
+            mask_current_condensate = cnt_fill(img.shape, cnt)
+            mean_intensity = cv2.mean(img, mask=mask_current_condensate)[0]
+            _, max_intensity, _, max_location = cv2.minMaxLoc(
+                img, mask=mask_current_condensate
+            )
 
-        condensateID += 1
+            # Finally, add the new row to the list to form dataframe
+            new_row = [
+                frame,
+                condensateID,
+                cnt_to_list(cnt),
+                center_x_pxl,
+                center_y_pxl,
+                area_um2,
+                R_nm,
+                mean_intensity,
+                max_intensity,
+                max_location,
+                aspect_ratio,
+                contour_solidity,
+                contour_extent,
+            ]
+            lst_rows_of_df.append(new_row)
 
-    if switch_plot:
-        pltcontours(img, contours, fpath[:-4] + ".png")
-    else:
-        continue
+            condensateID += 1
 
-df_save = pd.DataFrame.from_records(
-    lst_rows_of_df,
-    columns=columns,
-)
-fname_save = join(dirname(fpath), "condensates_AIO-pleaserename.csv")
-df_save.to_csv(fname_save, index=False)
+        if switch_plot and frame == 0:
+            pltcontours(img, contours, fpath[:-4] + ".png")
+        else:
+            continue
+
+    df_save = pd.DataFrame.from_records(
+        lst_rows_of_df,
+        columns=columns,
+    )
+    fname_save = join(
+        dirname(fpath), "condensates_AIO-" + basename(fpath)[:-23] + ".csv"
+    )
+    df_save.to_csv(fname_save, index=False)
