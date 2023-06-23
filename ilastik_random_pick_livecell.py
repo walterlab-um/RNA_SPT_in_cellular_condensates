@@ -4,6 +4,7 @@ import numpy as np
 from tifffile import imread, imwrite
 from random import choices
 from rich.progress import track
+import shutil
 
 # This script randomly picks 7 FOV from each condition to pool a ilastik traking dataset, to tranin a machine learning model for condensate boundary detection.
 
@@ -18,12 +19,16 @@ lst_subfolders = [f for f in os.listdir(dir_from) if f.endswith("100ms")]
 os.chdir(dir_from)
 for subfolder in track(lst_subfolders):
     all_files_in_subfolder = [
-        f for f in os.listdir(subfolder) if f.endswith("left.tif")
+        f for f in os.listdir(join(subfolder, "condensate")) if f.endswith(".tif")
     ]
-    chosen_ones = choices(all_files_in_subfolder, k=7)
+    chosen_ones = choices(all_files_in_subfolder, k=5)
     for fname in chosen_ones:
-        video = imread(join(dir_from, subfolder, fname))
-        first_frame = video[0, :, :].astype("uint16")
+        video = imread(join(dir_from, subfolder, "condensate", fname))
+        # first_frame = video[0, :, :].astype("uint16")
         average_projection = np.mean(video, axis=0).astype("uint16")
-        imwrite(join(dir_HOPS_condensate, fname), first_frame, imagej=True)
+        # imwrite(join(dir_HOPS_condensate, fname), first_frame, imagej=True)
+        shutil.copy(
+            join(dir_from, subfolder, "condensate", fname),
+            join(dir_HOPS_condensate, fname),
+        )
         imwrite(join(dir_cell_body, fname), average_projection, imagej=True)
