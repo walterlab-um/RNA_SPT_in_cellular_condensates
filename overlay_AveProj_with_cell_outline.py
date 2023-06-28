@@ -72,6 +72,6 @@ for subfolder in track(lst_subfolders):
         plt.tight_layout()
         plt.axis("scaled")
         plt.axis("off")
-        fpath_save = join(subfolder, "cell_body", FOVprefix + ".png")
+        fpath_save = join(subfolder, "cell_body", FOVprefix[:-1] + ".png")
         plt.savefig(fpath_save, format="png", bbox_inches="tight", dpi=600)
         plt.close()
