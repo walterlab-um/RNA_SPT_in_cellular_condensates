@@ -35,7 +35,9 @@ for subfolder in track(lst_subfolders):
         continue
 
     for FOVfname in all_FOV_fname:
-        FOVprefix = FOVfname[:-25]
+        FOVprefix = (
+            FOVfname[:-25] + "-"
+        )  # otherwise the first "FOV" will grab all outlines
         cells_in_current_FOV = [
             f for f in all_cell_body_outline_fname if FOVprefix in f
         ]
