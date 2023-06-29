@@ -19,7 +19,7 @@ um_per_pixel = 0.117
 # s_per_frame = float(input())
 s_per_frame = 0.1
 
-print("Choose the RNA track csv files for processing:")
+print("Choose the RNA-bandpass_reformatted.csv files for processing:")
 lst_fpath = list(fd.askopenfilenames())
 tracklength_threshold = 8  # must be 3 + max{len(lags_linear), len(lags_loglog)}
 # lag times for linear MSD-tau fitting (unit: frame)
@@ -114,7 +114,6 @@ def calc_angle(x, y):
     return angles
 
 
-lst_rows_of_df = []
 print("Now Processing:", dirname(lst_fpath[0]))
 for fpath in track(lst_fpath):
     df_current_file = pd.read_csv(fpath, dtype=float)
@@ -122,6 +121,7 @@ for fpath in track(lst_fpath):
     fname = basename(fpath)
     lst_trackID_in_file = df_current_file.trackID.unique().tolist()
 
+    lst_rows_of_df = []
     for trackID in lst_trackID_in_file:
         df_current_track = df_current_file[df_current_file.trackID == trackID]
         tracklength = df_current_track.shape[0]
@@ -196,9 +196,9 @@ for fpath in track(lst_fpath):
         ] + fractions.tolist()
         lst_rows_of_df.append(new_row)
 
-df_save = pd.DataFrame.from_records(
-    lst_rows_of_df,
-    columns=columns,
-)
-fname_save = join(dirname(fpath), "SPT_results_AIO-pleaserename.csv")
-df_save.to_csv(fname_save, index=False)
+    df_save = pd.DataFrame.from_records(
+        lst_rows_of_df,
+        columns=columns,
+    )
+    fname_save = join(dirname(fpath), "SPT_results_AIO-" + basename(fpath))
+    df_save.to_csv(fname_save, index=False)
