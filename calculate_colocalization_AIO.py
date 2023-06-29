@@ -39,29 +39,18 @@ lst_angle_fraction_titles = [
     for i in range(len(angle_bins) - 1)
 ]
 columns = [
-    "filename",
+    "filename_RNA",
+    "filename_condensate",
+    "filename_cell",
     "trackID",
     "t",
     "x",
     "y",
-    "cellID"，
     "InCondensate",
     "condensateID",
     "distance_to_center_nm",
     "distance_to_edge_nm",
-    "N_steps",
-    "Displacement_um",
-    "mean_spot_intensity_max_in_track",
-    "linear_fit_slope",
-    "linear_fit_R2",
-    "linear_fit_sigma",
-    "linear_fit_D_um2s",
-    "linear_fit_log10D",
-    "loglog_fit_R2",
-    "loglog_fit_log10D",
-    "alpha",
-    "list_of_angles",
-] + +lst_angle_fraction_titles
+]
 
 
 lst_rows_of_df = []
