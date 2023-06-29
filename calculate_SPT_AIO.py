@@ -17,7 +17,7 @@ print("Default scaling factors: s_per_frame = 0.02, um_per_pixel = 0.117")
 um_per_pixel = 0.117
 # print("Enter the time between frames (seconds):")
 # s_per_frame = float(input())
-s_per_frame = 0.02
+s_per_frame = 0.1
 
 print("Choose the RNA track csv files for processing:")
 lst_fpath = list(fd.askopenfilenames())
