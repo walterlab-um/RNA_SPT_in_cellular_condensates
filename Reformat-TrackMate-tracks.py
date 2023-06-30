@@ -71,13 +71,13 @@ for fpath in track(lst_files):
     fpath_save = fpath[:-4] + "_reformatted.csv"
     df_out.to_csv(fpath_save, index=False)
 
-    tracklengths = quick_tracklength_checker(df_out)
-    plt.figure(figsize=(9, 4), dpi=200)
-    sns.histplot(data=tracklengths, stat="count", bins=50, color="firebrick", alpha=0.5)
-    plt.xlim(np.min(tracklengths), np.max(tracklengths))
-    plt.title("Tracklength Distribution,\n" + basename(fpath), weight="bold")
-    plt.xlabel("Number of Frames", weight="bold")
-    plt.tight_layout()
-    fpath_save = fpath[:-4] + "_TracklengthDist.png"
-    plt.savefig(fpath_save, format="png")
-    plt.close()
+    # tracklengths = quick_tracklength_checker(df_out)
+    # plt.figure(figsize=(9, 4), dpi=200)
+    # sns.histplot(data=tracklengths, stat="count", bins=50, color="firebrick", alpha=0.5)
+    # plt.xlim(np.min(tracklengths), np.max(tracklengths))
+    # plt.title("Tracklength Distribution,\n" + basename(fpath), weight="bold")
+    # plt.xlabel("Number of Frames", weight="bold")
+    # plt.tight_layout()
+    # fpath_save = fpath[:-4] + "_TracklengthDist.png"
+    # plt.savefig(fpath_save, format="png")
+    # plt.close()
