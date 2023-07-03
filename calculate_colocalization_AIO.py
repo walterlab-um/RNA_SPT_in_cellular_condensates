@@ -10,6 +10,8 @@ from rich.progress import track
 pd.options.mode.chained_assignment = None  # default='warn'
 
 # AIO: All in one format
+# This script gives the collocalization information for every RNA position over time.
+# This version is for live cell data, including cell boundaries
 
 
 # scalling factors for physical units
