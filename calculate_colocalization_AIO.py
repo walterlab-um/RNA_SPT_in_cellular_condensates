@@ -91,7 +91,7 @@ for subfolder in lst_subfolders:
         fnames_cells_in_current_FOV = []
         dict_cell_polygons = dict()
         for f in all_fname_cell_body:
-            if fname_RNA_AIO[16:].split("-RNA")[0] in f:
+            if fname_RNA_AIO[16:].split("-RNA")[0] + "-" in f:
                 fnames_cells_in_current_FOV.append(f)
                 cell_outline_coordinates = pd.read_csv(
                     join(subfolder, "cell_body", f), sep="	", header=None
@@ -107,7 +107,7 @@ for subfolder in lst_subfolders:
 
         # load all condensates within the current FOV
         for f in all_fname_condensate_AIO:
-            if fname_RNA_AIO[16:].split("-RNA")[0] in f:
+            if fname_RNA_AIO[16:].split("-RNA")[0] + "-" in f:
                 fname_condensate_AIO = f
                 break
         if "fname_condensate_AIO" not in globals():
@@ -176,7 +176,7 @@ for subfolder in lst_subfolders:
                         R_nm = np.sqrt(polygon.area * nm_per_pixel**2 / np.pi)
                         # p1, p2 = nearest_points(polygon, point_RNA)
                         distance_to_edge_nm = (
-                            distance(polygon, point_RNA) * nm_per_pixel
+                            polygon.exterior.distance(point_RNA) * nm_per_pixel
                         )
                         distance_to_center_nm = (
                             distance(polygon.centroid, point_RNA) * nm_per_pixel
