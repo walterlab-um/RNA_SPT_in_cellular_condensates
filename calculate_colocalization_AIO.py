@@ -3,6 +3,8 @@ from os.path import join, dirname
 import numpy as np
 import pandas as pd
 from shapely.geometry import Point, Polygon
+from shapely.ops import nearest_points
+from shapely import distance
 from rich.progress import track
 
 pd.options.mode.chained_assignment = None  # default='warn'
@@ -11,14 +13,8 @@ pd.options.mode.chained_assignment = None  # default='warn'
 
 
 # scalling factors for physical units
-um_per_pixel = 0.117
-s_per_frame = 0.1
-print(
-    "Scaling factors: s_per_frame = "
-    + str(s_per_frame)
-    + ", um_per_pixel = "
-    + str(um_per_pixel)
-)
+nm_per_pixel = 117
+print("Scaling factors: nm_per_pixel = " + str(nm_per_pixel))
 
 # Change the below directory to a mother folder containing subfolders for each condition. Within each subfolder, a "condensate" folder must be found containing all condensate videos in tif format.
 dir_from = "/Volumes/AnalysisGG/PROCESSED_DATA/RNA_in_HOPS-Jun2023_wrapup/LiveCell-different-RNAs-in-HOPS"
@@ -42,6 +38,7 @@ columns = [
     "y",
     "InCondensate",
     "condensateID",
+    "R_nm",
     "distance_to_center_nm",
     "distance_to_edge_nm",
 ]
@@ -71,7 +68,6 @@ def list_like_string_to_xyt(list_like_string):
     return lst_xyt
 
 
-lst_rows_of_df = []
 os.chdir(dir_from)
 ## loop through each subfolder/experiment condition
 for subfolder in lst_subfolders:
@@ -91,17 +87,25 @@ for subfolder in lst_subfolders:
     for fname_RNA_AIO in all_fname_RNA_AIO:
         df_RNA = pd.read_csv(join(subfolder, "RNA", fname_RNA_AIO))
 
-        # find the fnames for cells within the current FOV
+        # load cell boundaries as dictionary of polygons
         fnames_cells_in_current_FOV = []
+        dict_cell_polygons = dict()
         for f in all_fname_cell_body:
             if fname_RNA_AIO[16:].split("-RNA")[0] in f:
                 fnames_cells_in_current_FOV.append(f)
+                cell_outline_coordinates = pd.read_csv(
+                    join(subfolder, "cell_body", f), sep="	", header=None
+                )
+                coords_roi = [
+                    tuple(row) for _, row in cell_outline_coordinates.iterrows()
+                ]
+                dict_cell_polygons[f] = Polygon(coords_roi)
                 break
         if len(fnames_cells_in_current_FOV) == 0:
             print("There's no cells in current FOV.")
             break
 
-        # load the condensates AIO file for the current FOV
+        # load all condensates within the current FOV
         for f in all_fname_condensate_AIO:
             if fname_RNA_AIO[16:].split("-RNA")[0] in f:
                 fname_condensate_AIO = f
@@ -111,38 +115,104 @@ for subfolder in lst_subfolders:
             break
         df_condensate = pd.read_csv(join(subfolder, "condensate", fname_condensate_AIO))
 
-        # process RNA tracks one by one
-        for trackID in df_RNA["trackID"]:
+        ## process RNA tracks one by one
+        lst_rows_of_df = []
+        for trackID in track(df_RNA["trackID"], description=fname_RNA_AIO):
             current_track = df_RNA[df_RNA["trackID"] == trackID]
             lst_x = list_like_string_to_xyt(current_track["list_of_x"].squeeze())
             lst_y = list_like_string_to_xyt(current_track["list_of_y"].squeeze())
             lst_t = list_like_string_to_xyt(current_track["list_of_t"].squeeze())
 
             # process each position in track one by one
-            for i in len(lst_t):
+            for i in range(len(lst_t)):
                 t = lst_t[i]
                 x = lst_x[i]
                 y = lst_y[i]
+
+                point_RNA = Point(x, y)
+
+                # load condensates near the RNA as dictionary of polygons
+                df_condensate_current_t = df_condensate[df_condensate["frame"] == t]
+                all_condensateID_nearby = []
+                for _, row in df_condensate_current_t.iterrows():
+                    center_x_pxl = row["center_x_pxl"]
+                    center_y_pxl = row["center_y_pxl"]
+                    if np.abs(center_x_pxl - x) > 50:
+                        break
+                    elif np.abs(center_y_pxl - y) > 50:
+                        break
+                    else:
+                        all_condensateID_nearby.append(row["condensateID"])
+
+                dict_condensate_polygons_nearby = dict()
+                for condensateID_nearby in all_condensateID_nearby:
+                    str_condensate_coords = df_condensate_current_t[
+                        df_condensate_current_t["condensateID"] == condensateID_nearby
+                    ]["contour_coord"].squeeze()
+
+                    lst_tup_condensate_coords = []
+                    for str_condensate_xy in str_condensate_coords[2:-2].split("], ["):
+                        condensate_x, condensate_y = str_condensate_xy.split(", ")
+                        lst_tup_condensate_coords.append(
+                            tuple([int(condensate_x), int(condensate_y)])
+                        )
+
+                    dict_condensate_polygons_nearby[condensateID_nearby] = Polygon(
+                        lst_tup_condensate_coords
+                    )
+
+                ## Perform colocalization
+                # search for which cell it's in
+                for key, polygon in dict_cell_polygons.items():
+                    if point_RNA.within(polygon):
+                        fname_cell = key
+                        break
+                # search for which condensate it's in
+                InCondensate = False
+                for key, polygon in dict_condensate_polygons_nearby.items():
+                    if point_RNA.within(polygon):
+                        InCondensate = True
+                        condensateID = key
+                        R_nm = np.sqrt(polygon.area * nm_per_pixel**2 / np.pi)
+                        # p1, p2 = nearest_points(polygon, point_RNA)
+                        distance_to_edge_nm = (
+                            distance(polygon, point_RNA) * nm_per_pixel
+                        )
+                        distance_to_center_nm = (
+                            distance(polygon.centroid, point_RNA) * nm_per_pixel
+                        )
+                        break
+                if not InCondensate:
+                    condensateID = np.nan
+                    R_nm = np.nan
+                    distance_to_center_nm = np.nan
+                    distance_to_edge_nm = np.nan
 
                 # Save
                 new_row = [
                     fname_RNA_AIO,
                     fname_condensate_AIO,
-                    "fname_cell",
+                    fname_cell,
                     trackID,
                     t,
                     x,
                     y,
-                    "InCondensate",
-                    "condensateID",
-                    "distance_to_center_nm",
-                    "distance_to_edge_nm",
+                    InCondensate,
+                    condensateID,
+                    R_nm,
+                    distance_to_center_nm,
+                    distance_to_edge_nm,
                 ]
                 lst_rows_of_df.append(new_row)
 
-df_save = pd.DataFrame.from_records(
-    lst_rows_of_df,
-    columns=columns,
-)
-fname_save = join(dirname(fpath), "SPT_results_AIO-pleaserename.csv")
-df_save.to_csv(fname_save, index=False)
+        df_save = pd.DataFrame.from_records(
+            lst_rows_of_df,
+            columns=columns,
+        )
+        fname_save = join(
+            subfolder,
+            "colocalization_AIO-"
+            + fname_RNA_AIO.split("AIO-")[-1].split("-RNA")[0]
+            + ".csv",
+        )
+        df_save.to_csv(fname_save, index=False)
