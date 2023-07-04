@@ -105,7 +105,7 @@ for subfolder in lst_subfolders:
                 break
         if len(fnames_cells_in_current_FOV) == 0:
             print("There's no cells in current FOV.")
-            break
+            continue
 
         # load all condensates within the current FOV
         for f in all_fname_condensate_AIO:
@@ -114,7 +114,7 @@ for subfolder in lst_subfolders:
                 break
         if "fname_condensate_AIO" not in globals():
             print("There's no condensate AIO file for the current FOV.")
-            break
+            continue
         df_condensate = pd.read_csv(join(subfolder, "condensate", fname_condensate_AIO))
 
         ## process RNA tracks one by one
@@ -124,6 +124,38 @@ for subfolder in lst_subfolders:
             lst_x = list_like_string_to_xyt(current_track["list_of_x"].squeeze())
             lst_y = list_like_string_to_xyt(current_track["list_of_y"].squeeze())
             lst_t = list_like_string_to_xyt(current_track["list_of_t"].squeeze())
+            mean_RNA_x = np.mean(lst_x)
+            mean_RNA_y = np.mean(lst_y)
+
+            # load condensates near the RNA as dictionary of polygons
+            df_condensate_current_t = df_condensate[df_condensate["frame"] == t]
+            all_condensateID_nearby = []
+            for _, row in df_condensate_current_t.iterrows():
+                center_x_pxl = row["center_x_pxl"]
+                center_y_pxl = row["center_y_pxl"]
+                if (center_x_pxl - mean_RNA_x) ** 2 + (
+                    center_y_pxl - mean_RNA_y
+                ) ** 2 > 50:
+                    continue
+                else:
+                    all_condensateID_nearby.append(row["condensateID"])
+
+            dict_condensate_polygons_nearby = dict()
+            for condensateID_nearby in all_condensateID_nearby:
+                str_condensate_coords = df_condensate_current_t[
+                    df_condensate_current_t["condensateID"] == condensateID_nearby
+                ]["contour_coord"].squeeze()
+
+                lst_tup_condensate_coords = []
+                for str_condensate_xy in str_condensate_coords[2:-2].split("], ["):
+                    condensate_x, condensate_y = str_condensate_xy.split(", ")
+                    lst_tup_condensate_coords.append(
+                        tuple([int(condensate_x), int(condensate_y)])
+                    )
+
+                dict_condensate_polygons_nearby[condensateID_nearby] = Polygon(
+                    lst_tup_condensate_coords
+                )
 
             # process each position in track one by one
             for i in range(len(lst_t)):
@@ -132,37 +164,6 @@ for subfolder in lst_subfolders:
                 y = lst_y[i]
 
                 point_RNA = Point(x, y)
-
-                # load condensates near the RNA as dictionary of polygons
-                df_condensate_current_t = df_condensate[df_condensate["frame"] == t]
-                all_condensateID_nearby = []
-                for _, row in df_condensate_current_t.iterrows():
-                    center_x_pxl = row["center_x_pxl"]
-                    center_y_pxl = row["center_y_pxl"]
-                    if np.abs(center_x_pxl - x) > 50:
-                        break
-                    elif np.abs(center_y_pxl - y) > 50:
-                        break
-                    else:
-                        all_condensateID_nearby.append(row["condensateID"])
-
-                dict_condensate_polygons_nearby = dict()
-                for condensateID_nearby in all_condensateID_nearby:
-                    str_condensate_coords = df_condensate_current_t[
-                        df_condensate_current_t["condensateID"] == condensateID_nearby
-                    ]["contour_coord"].squeeze()
-
-                    lst_tup_condensate_coords = []
-                    for str_condensate_xy in str_condensate_coords[2:-2].split("], ["):
-                        condensate_x, condensate_y = str_condensate_xy.split(", ")
-                        lst_tup_condensate_coords.append(
-                            tuple([int(condensate_x), int(condensate_y)])
-                        )
-
-                    dict_condensate_polygons_nearby[condensateID_nearby] = Polygon(
-                        lst_tup_condensate_coords
-                    )
-
                 ## Perform colocalization
                 # search for which cell it's in
                 for key, polygon in dict_cell_polygons.items():
