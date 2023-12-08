@@ -9,14 +9,15 @@ from rich.progress import track
 print("Choose all tif files to be batch proccessed:")
 lst_files = list(fd.askopenfilenames())
 
-DoG_sigma = 1
+DoG_sigma_low = 1
+DoG_sigma_high = 3
 
 ###############################
 for f in track(lst_files):
     video = imread(f)
     video_out = []
     for img in video:
-        img_filtered = difference_of_gaussians(img, DoG_sigma)
+        img_filtered = difference_of_gaussians(img, DoG_sigma_low, DoG_sigma_high)
         video_out.append(img_filtered)
     video_out = np.stack(video_out)
     fsave = f[:-4] + "-bandpass.tif"
