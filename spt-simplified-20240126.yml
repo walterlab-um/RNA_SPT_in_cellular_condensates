@@ -1,0 +1,40 @@
+name: spt
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - pip
+  - python=3.9
+  - ffmpeg
+  - pip:
+    - black
+    - fastspt==16.1
+    - flake8
+    - h5py
+    - hmmlearn
+    - ipython
+    - ipywidgets
+    - jupyterlab
+    - jupyterlab_code_formatter
+    - lmfit
+    - matplotlib
+    - numba
+    - numpy
+    - opencv-python
+    - pandas
+    - Pillow
+    - PIMS
+    - rich
+    - saspt==0.4.0
+    - scikit-image
+    - scipy
+    - seaborn
+    - shapely
+    - statannot==0.2.3
+    - subpixel-edges
+    - tifffile
+    - trackpy
+prefix: /Users/GGM/opt/anaconda3/envs/spt
+
+
