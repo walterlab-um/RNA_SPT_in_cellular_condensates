@@ -121,8 +121,8 @@ for fpath in lst_fpath:
             M = cv2.moments(cnt)
             if M["m00"] == 0:
                 continue
-            center_x_pxl = int(M["m10"] / M["m00"])
-            center_y_pxl = int(M["m01"] / M["m00"])
+            center_x_pxl = M["m10"] / M["m00"]
+            center_y_pxl = M["m01"] / M["m00"]
             # condensate size
             area_um2 = cv2.contourArea(cnt) * um_per_pixel**2
             R_nm = np.sqrt(area_um2 / np.pi) * 1000
