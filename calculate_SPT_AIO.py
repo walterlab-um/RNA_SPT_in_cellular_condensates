@@ -11,7 +11,7 @@ pd.options.mode.chained_assignment = None  # default='warn'
 
 
 # scalling factors for physical units
-print("Default scaling factors: s_per_frame = 0.02, um_per_pixel = 0.117")
+print("Default scaling factors: s_per_frame = 0.1, um_per_pixel = 0.117")
 # print("micron per pixel:")
 # um_per_pixel = float(input())
 um_per_pixel = 0.117
