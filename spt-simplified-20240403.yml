@@ -19,6 +19,7 @@ dependencies:
     - jupyterlab_code_formatter
     - lmfit
     - matplotlib
+    - nd2reader
     - numba
     - numpy
     - opencv-python
