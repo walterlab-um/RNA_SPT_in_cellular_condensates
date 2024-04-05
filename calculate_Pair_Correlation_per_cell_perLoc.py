@@ -173,7 +173,6 @@ def main():
     root.withdraw()  # Hide the main window
 
     folder_path = fd.askdirectory()
-    os.chdir(folder_path)
     fname_save = "PairCorr-DataDict-pooled-perLoc.p"
 
     # Parameters
@@ -187,9 +186,15 @@ def main():
     )  # overlaping bins (sliding window)
 
     # Matching three folder contents
-    rna_files = [file for file in os.listdir("RNA") if file.endswith("-ch2.csv")]
+    rna_files = [
+        file
+        for file in os.listdir(join(folder_path, "RNA"))
+        if file.endswith("-ch2.csv")
+    ]
     condensate_files = [
-        file for file in os.listdir("condensate") if file.endswith("-ch1.csv")
+        file
+        for file in os.listdir(join(folder_path, "condensate"))
+        if file.endswith("-ch1.csv")
     ]
     experiment_names = find_common(condensate_files, rna_files)
     cell_roi_files = [
