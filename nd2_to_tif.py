@@ -48,7 +48,9 @@ def convert_nd2_to_tiff(input_files):
 
                     # Save the z-stack as a single TIFF file in the same folder as the input file
                     output_file = os.path.join(input_dir, f"{base_name}_ch{ch+1}.tif")
-                    imsave(output_file, z_stack)
+
+                    # Correct the metadata to treat z-stacks as frames
+                    imsave(output_file, z_stack, imagej=True, metadata={"axes": "TYX"})
 
         except Exception as e:
             logging.error(f"Error processing file: {input_file}")
