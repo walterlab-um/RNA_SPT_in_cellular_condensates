@@ -199,7 +199,7 @@ def main():
     experiment_names = find_common(condensate_files, protein_files)
     cell_roi_files = [
         file
-        for file in os.listdir("cell_body_mannual")
+        for file in os.listdir(join(folder_path, "cell_body_mannual"))
         if any(file.startswith(name) for name in experiment_names)
         and file.endswith(".txt")
     ]
