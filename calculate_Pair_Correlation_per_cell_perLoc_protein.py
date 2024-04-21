@@ -4,7 +4,7 @@ from tifffile import imread
 import cv2
 import math
 import os
-from os.path import join, dirname
+from os.path import join, diproteinme
 import numpy as np
 import pandas as pd
 import pickle
@@ -23,9 +23,9 @@ cross PCF using channel 1 spots as reference
 """
 
 
-def find_common(condensate_files, rna_files):
+def find_common(condensate_files, protein_files):
     experiment_names1 = [file.rstrip("-ch1.csv") for file in condensate_files]
-    experiment_names2 = [file.rstrip("-ch2.csv") for file in rna_files]
+    experiment_names2 = [file.rstrip("-ch2.csv") for file in protein_files]
     return list(set(experiment_names1) & set(experiment_names2))
 
 
@@ -116,7 +116,7 @@ def PairCorr_with_edge_correction(
 # Function to process a single file
 def process_file(
     i,
-    rna_files,
+    protein_files,
     condensate_files,
     cell_roi_files,
     nm_per_pxl,
@@ -134,20 +134,20 @@ def process_file(
     cell_polygon = Polygon(coords_roi)
 
     # import condensates (ch1) and RNA/protein (ch2) spots
-    matching_rna_file = [
-        s for s in rna_files if s.startswith(cell_roi_file.split("-cell")[0])
+    matching_protein_file = [
+        s for s in protein_files if s.startswith(cell_roi_file.split("-cell")[0])
     ][0]
     matching_condensate_file = [
         s for s in condensate_files if s.startswith(cell_roi_file.split("-cell")[0])
     ][0]
-    df_rna = pd.read_csv(join(folder_path, "RNA", matching_rna_file))
+    df_protein = pd.read_csv(join(folder_path, "immuno_protein", matching_protein_file))
     df_condensate = pd.read_csv(
         join(folder_path, "condensate", matching_condensate_file)
     )
 
     cross_condensate_ref = PairCorr_with_edge_correction(
         df_condensate,  # ref
-        df_rna,  # interest
+        df_protein,  # interest
         cell_polygon,
         nm_per_pxl,
         r_max_nm,
@@ -157,17 +157,17 @@ def process_file(
 
     return (
         cell_roi_file,
-        matching_rna_file,
+        matching_protein_file,
         matching_condensate_file,
         cross_condensate_ref,
         df_condensate.shape[0],
-        df_rna.shape[0],
+        df_protein.shape[0],
     )
 
 
 def main():
     print(
-        "Choose the main folder contains 3 subfolders: RNA, condensate, cell_body_mannual"
+        "Choose the main folder contains 3 subfolders: immuno_protein, condensate, cell_body_mannual"
     )
     root = tk.Tk()
     root.withdraw()  # Hide the main window
@@ -186,9 +186,9 @@ def main():
     )  # overlaping bins (sliding window)
 
     # Matching three folder contents
-    rna_files = [
+    protein_files = [
         file
-        for file in os.listdir(join(folder_path, "RNA"))
+        for file in os.listdir(join(folder_path, "immuno_protein"))
         if file.endswith("-ch2.csv")
     ]
     condensate_files = [
@@ -196,7 +196,7 @@ def main():
         for file in os.listdir(join(folder_path, "condensate"))
         if file.endswith("-ch1.csv")
     ]
-    experiment_names = find_common(condensate_files, rna_files)
+    experiment_names = find_common(condensate_files, protein_files)
     cell_roi_files = [
         file
         for file in os.listdir("cell_body_mannual")
@@ -219,7 +219,7 @@ def main():
                 process_file,
                 args=(
                     i,
-                    rna_files,
+                    protein_files,
                     condensate_files,
                     cell_roi_files,
                     nm_per_pxl,
@@ -243,19 +243,19 @@ def main():
     # Unpack results into separate lists
     (
         lst_cell_roi,
-        lst_rna_file,
+        lst_protein_file,
         lst_condensate_file,
         lst_cross,
         lst_size_FUS,
-        lst_size_RNA,
+        lst_size_protein,
     ) = map(list, zip(*processed_results))
 
     dict_to_save = {
         "cell_rois": lst_cell_roi,
-        "filenames_RNA": lst_rna_file,
+        "filenames_protein": lst_protein_file,
         "filenames_condensate": lst_condensate_file,
-        "lst_N_locations_FUS": lst_size_FUS,
-        "lst_N_locations_RNA": lst_size_RNA,
+        "lst_N_loc_condensate": lst_size_FUS,
+        "lst_N_loc_protein": lst_size_protein,
         "lst_cross": lst_cross,
         "nm_per_pxl": nm_per_pxl,
         "r_max_nm": r_max_nm,
