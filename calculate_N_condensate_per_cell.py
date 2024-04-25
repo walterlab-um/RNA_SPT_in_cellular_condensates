@@ -40,7 +40,6 @@ def count_within_cell_polygon(df, cell_polygon):
 # Function to process a single file
 def process_file(
     i,
-    condensate_files,
     cell_roi_files,
     folder_path,
 ):
@@ -83,7 +82,6 @@ def main():
         for file in os.listdir(join(folder_path, "cell_body_mannual"))
         if file.endswith(".txt")
     ]
-    condensate_files = [transform_string(f) for f in cell_roi_files]
 
     # The tqdm library provides an easy way to visualize the progress of loops.
     pbar = tqdm(total=len(cell_roi_files))
@@ -100,7 +98,6 @@ def main():
                 process_file,
                 args=(
                     i,
-                    condensate_files,
                     cell_roi_files,
                     folder_path,
                 ),
