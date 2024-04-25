@@ -30,8 +30,8 @@ def count_within_cell_polygon(df, cell_polygon):
     Take a Polygon cell_polygon and a dataframe contain columns 'x' and 'y', and return numpy array of x and y within the cell_polygon.
     """
     count = 0
-    for _, row in df.iterrows():
-        if Point(row.x, row.y).within(cell_polygon):
+    for _, row in df[df["frame"] == 0].iterrows():
+        if Point(row.center_x_pxl, row.center_y_pxl).within(cell_polygon):
             count += 1
     return count
 
