@@ -2,8 +2,7 @@ from shapely.geometry import Point, Polygon
 import os
 from os.path import join, dirname
 import pandas as pd
-from tqdm import tqdm
-from multiprocessing import Pool, cpu_count
+from rich.progress import track
 from tkinter import filedialog as fd
 import tkinter as tk
 
@@ -81,41 +80,16 @@ def main():
         if file.endswith(".txt")
     ]
 
-    # The tqdm library provides an easy way to visualize the progress of loops.
-    pbar = tqdm(total=len(cell_roi_files))
-
-    # Update function for the progress bar
-    def update(*a):
-        pbar.update()
-
-    # Create a process pool and map the function to the files
-    with Pool(cpu_count()) as p:
-        results = []
-        for i in range(len(cell_roi_files)):
-            result = p.apply_async(
-                process_file,
-                args=(
-                    i,
-                    cell_roi_files,
-                    folder_path,
-                ),
-                callback=update,
-            )
-            results.append(result)
-
-        processed_results = []
-        for r in results:
-            try:
-                processed_results.append(r.get())
-            except:
-                pass
-    pbar.close()
-
-    # Unpack results into separate lists
-    (
-        lst_cell_roi,
-        lst_N_condensate_per_cell,
-    ) = map(list, zip(*processed_results))
+    lst_cell_roi = []
+    lst_N_condensate_per_cell = []
+    for i in track(range(len(cell_roi_files))):
+        cell_roi_file, N_condensate_per_cell = process_file(
+            i,
+            cell_roi_files,
+            folder_path,
+        )
+        lst_cell_roi.append(cell_roi_file)
+        lst_N_condensate_per_cell.append(N_condensate_per_cell)
 
     df_save = pd.DataFrame(
         {"cell_rois": lst_cell_roi, "N_condensate_per_cell": lst_N_condensate_per_cell}
