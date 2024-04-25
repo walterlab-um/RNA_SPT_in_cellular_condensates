@@ -52,15 +52,12 @@ for i in track(range(len(cell_roi_files))):
 
     # import condensates
     matching_condensate_file = [
-        s for s in condensate_files if s.startswith(cell_roi_file.split("-cell")[0])
+        s for s in condensate_files if cell_roi_file.split("-cell")[0] in s
     ][0]
-    try:
-        df_condensate = pd.read_csv(
-            join(folder_path, "condensate", matching_condensate_file)
-        )
-        N_condensate_per_cell = count_within_cell_polygon(df_condensate, cell_polygon)
-    except FileNotFoundError:
-        continue
+    df_condensate = pd.read_csv(
+        join(folder_path, "condensate", matching_condensate_file)
+    )
+    N_condensate_per_cell = count_within_cell_polygon(df_condensate, cell_polygon)
 
     lst_cell_roi.append(cell_roi_file)
     lst_N_condensate_per_cell.append(N_condensate_per_cell)
