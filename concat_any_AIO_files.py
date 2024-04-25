@@ -19,7 +19,8 @@ print("AIO type:", type_AIO + "_AIO")
 lst_df = []
 for f in track(lst_path_data):
     df = pd.read_csv(f)
-    df.insert(0, "filename", np.repeat(basename(f), df.shape[0]))
+    if "filename" not in df.columns:
+        df.insert(0, "filename", np.repeat(basename(f), df.shape[0]))
     lst_df.append(df)
 df_all = pd.concat(lst_df, ignore_index=True)
 df_all.to_csv(type_AIO + "_AIO_concat-pleaserename.csv", index=False)
