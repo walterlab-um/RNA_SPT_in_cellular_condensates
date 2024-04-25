@@ -51,11 +51,13 @@ def process_file(
     cell_polygon = Polygon(coords_roi)
 
     # import condensates
-    df_condensate = pd.read_csv(
-        join(folder_path, "condensate", transform_string(cell_roi_file))
-    )
-
-    N_condensate_per_cell = count_within_cell_polygon(df_condensate, cell_polygon)
+    try:
+        df_condensate = pd.read_csv(
+            join(folder_path, "condensate", transform_string(cell_roi_file))
+        )
+        N_condensate_per_cell = count_within_cell_polygon(df_condensate, cell_polygon)
+    except FileNotFoundError:
+        N_condensate_per_cell = 0
 
     return (
         cell_roi_file,
@@ -85,6 +87,8 @@ def main():
             cell_roi_files,
             folder_path,
         )
+        if N_condensate_per_cell == 0:
+            continue
         lst_cell_roi.append(cell_roi_file)
         lst_N_condensate_per_cell.append(N_condensate_per_cell)
 
