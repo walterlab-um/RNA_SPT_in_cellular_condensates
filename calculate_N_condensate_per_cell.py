@@ -55,10 +55,7 @@ def process_file(
         join(folder_path, "condensate", transform_string(cell_roi_file))
     )
 
-    N_condensate_per_cell = 0
-    for _, row in df_condensate.iterrows():
-        if Point(row.x, row.y).within(cell_polygon):
-            N_condensate_per_cell += 1
+    N_condensate_per_cell = count_within_cell_polygon(df_condensate, cell_polygon)
 
     return (
         cell_roi_file,
