@@ -4,7 +4,7 @@ from tifffile import imread
 import cv2
 import math
 import os
-from os.path import join, diproteinme
+from os.path import join, dirname
 import numpy as np
 import pandas as pd
 import pickle
