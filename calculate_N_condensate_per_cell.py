@@ -68,9 +68,7 @@ def process_file(
 
 
 def main():
-    print(
-        "Choose the main folder contains 3 subfolders: immuno_protein, condensate, cell_body_mannual"
-    )
+    print("Choose the main folder contains subfolders: condensate, cell_body_mannual")
     root = tk.Tk()
     root.withdraw()  # Hide the main window
 
