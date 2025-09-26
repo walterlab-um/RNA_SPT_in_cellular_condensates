@@ -1,10 +1,10 @@
 from util import *
 from param import *
+from shapely.geometry import Point, Polygon
+from shapely.strtree import STRtree
 
-# INDIVIDUAL EXPERIMENT RECONSTRUCTIONS: Each experiment as separate plot
-print("🎯 Creating individual final reconstructions for each experiment...")
 
-def analyze_interactions_all_experiments(df_tracks, df_condensates, proximity_threshold=1):
+def legacy_analyze_interactions(df_tracks, df_condensates, proximity_threshold=1):
     """Analyze track-condensate interactions across all experiments"""
     
     def get_contour_coords(df_condensates, frame, experiment):
@@ -82,6 +82,129 @@ def analyze_interactions_all_experiments(df_tracks, df_condensates, proximity_th
               f"with {len(contour_boundaries)} condensates")
     
     return experiment_results
+
+
+
+def analyze_interactions_all_experiments(df_tracks, df_condensates, proximity_threshold=1):
+    """
+    Analyzes track-condensate interactions and returns final frame data for plotting.
+
+    A track is considered 'interacting' if any of its points are inside a
+    condensate or within the specified proximity threshold of a condensate's
+    boundary at any frame during the experiment.
+
+    Args:
+        df_tracks (pd.DataFrame): DataFrame with track data.
+        df_condensates (pd.DataFrame): DataFrame with condensate data.
+        proximity_threshold (float): The distance in pixels from a condensate
+                                     boundary to classify a track as interacting.
+
+    Returns:
+        dict: A dictionary for each experiment containing the full analysis results
+              plus 'final_frame' and 'contour_boundaries' for visualization.
+    """
+    experiment_results = {}
+    print("🔍 Analyzing interactions for each experiment using spatial indexing:")
+
+    # Process each experiment separately
+    for experiment in df_tracks['experiment'].unique():
+        print(f"  Processing: {experiment}")
+
+        # Filter data for the current experiment
+        exp_tracks = df_tracks[df_tracks['experiment'] == experiment]
+        exp_condensates = df_condensates[df_condensates['experiment'] == experiment]
+
+        if exp_tracks.empty or exp_condensates.empty:
+            print(f"    ⚠️ Skipping {experiment} - missing track or condensate data.")
+            continue
+            
+        # Get final frame number for later use
+        final_frame = int(exp_tracks['t'].max())
+
+        # --- Full Interaction Analysis (across all frames) ---
+        interacting_track_ids = set()
+        all_track_ids = set(exp_tracks['trackID'].unique())
+        condensates_by_frame = exp_condensates.groupby('frame')['contour_coord'].apply(list).to_dict()
+
+        for frame, contour_str_list in condensates_by_frame.items():
+            if len(interacting_track_ids) == len(all_track_ids):
+                break
+            
+            tracks_in_frame = exp_tracks[exp_tracks['t'] == frame]
+            if tracks_in_frame.empty:
+                continue
+
+            shapely_polygons = []
+            for cnt_str in contour_str_list:
+                bx, by = parse_contour_string(cnt_str)
+                if len(bx) >= 3:
+                    poly = Polygon(zip(bx, by))
+                    if not poly.is_valid:
+                        poly = poly.buffer(0)
+                    if not poly.is_empty:
+                        shapely_polygons.append(poly)
+            
+            if not shapely_polygons:
+                continue
+
+            spatial_index = STRtree(shapely_polygons)
+            for _, track_point in tracks_in_frame.iterrows():
+                track_id = track_point['trackID']
+                if track_id in interacting_track_ids:
+                    continue
+
+                point = Point(track_point['x'], track_point['y'])
+                nearest_poly_index = spatial_index.nearest(point)
+                if nearest_poly_index is None:
+                    continue
+                
+                nearest_poly = shapely_polygons[nearest_poly_index]
+                distance = point.distance(nearest_poly.boundary)
+                if nearest_poly.contains(point):
+                    distance = -distance
+                
+                if distance <= proximity_threshold:
+                    interacting_track_ids.add(track_id)
+
+        # --- Retrieve Final Frame Boundaries for Plotting ---
+        contour_boundaries = []
+        final_frame_contours_str = exp_condensates[exp_condensates['frame'] == final_frame]['contour_coord'].tolist()
+        for cnt_str in final_frame_contours_str:
+            x, y = parse_contour_string(cnt_str)
+            if len(x) > 0:
+                contour_boundaries.append((np.array(x), np.array(y)))
+        
+        # --- Summarize and Store All Results ---
+        num_total_tracks = len(all_track_ids)
+        num_interacting_tracks = len(interacting_track_ids)
+
+        if 'label' in exp_condensates.columns:
+            num_condensates = len(exp_condensates['label'].unique())
+        else:
+            num_condensates = exp_condensates.groupby('frame').size().max() if not exp_condensates.empty else 0
+
+        experiment_results[experiment] = {
+            'final_frame': final_frame,
+            'contour_boundaries': contour_boundaries,
+            'interacting_tracks': interacting_track_ids,
+            'total_tracks': num_total_tracks,
+            'total_condensates': num_condensates
+        }
+        
+        print(f"    ✅ {num_interacting_tracks}/{num_total_tracks} tracks interacting "
+              f"with approx. {num_condensates} unique condensates.")
+    
+    return experiment_results
+
+
+
+
+
+
+
+
+
+
 
 def create_individual_experiment_reconstructions(df_tracks,
                                                  df_condensates,
@@ -204,11 +327,134 @@ def create_individual_experiment_reconstructions(df_tracks,
     
     print(f"🎉 All {n_experiments} individual reconstructions created!")
 
-# INDIVIDUAL EXPERIMENT CONDENSATE MONTAGES: One montage per experiment (with size limits)
-print("🔍 Creating individual condensate montages for each experiment...")
 
-def create_individual_experiment_montages(df_tracks, df_condensates, experiment_results, 
-                                        zoom_margin=25, montage_cols=4):
+
+
+
+
+
+
+
+
+def create_trajectory_snapshots(track_df,
+                                condensate_df,
+                                exp_result,
+                                save_path=None,
+                                zoom_margin=25):
+    """
+    Creates a single, zoomed-in snapshot for one RNA track interacting with one condensate.
+
+    This function is designed to plot a single interaction event, assuming the input
+    DataFrames are pre-filtered for one specific track and one specific condensate.
+
+    Parameters:
+    - track_df (pd.DataFrame): DataFrame containing the data for a single track.
+    - condensate_df (pd.DataFrame): DataFrame containing the data for a single condensate.
+    - exp_result (dict): A dictionary with metadata for the event, used for labeling the plot.
+      Example: {'experiment': 'Experiment_A', 'trackID': 123, 'condensate_idx': 1}
+    - save_path (str): The full file path (including filename and extension) to save the snapshot.
+    - zoom_margin (int): Margin in pixels to apply around the interaction for the zoom window.
+    """
+    if track_df.empty or condensate_df.empty or exp_result is None:
+        print("⚠️ Warning: Input track or condensate DataFrame or experiment result is empty. Cannot create snapshot.")
+        return
+
+    # --- 1. Extract Data from Inputs ---
+    track_data = track_df.sort_values('t')
+    track_id = track_data['trackID'].iloc[0]
+
+    # Extract contour for the single condensate
+    contour_str = condensate_df['contour_coord'].iloc[0]
+    cx, cy = parse_contour_string(contour_str)
+    cx, cy = np.array(cx), np.array(cy)
+
+    # Get metadata for titles and labels
+    experiment_name = exp_result.get('experiment', 'Unknown Experiment')
+    condensate_id = exp_result.get('condensate_idx', 1)
+    
+    # --- 2. Set up the Plot ---
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.set_facecolor('white')
+
+    # --- 3. Calculate the Zoom Window ---
+    # Get the bounding box for the track and the condensate
+    min_x_combined = min(track_data['x'].min(), np.min(cx))
+    max_x_combined = max(track_data['x'].max(), np.max(cx))
+    min_y_combined = min(track_data['y'].min(), np.min(cy))
+    max_y_combined = max(track_data['y'].max(), np.max(cy))
+
+    # Apply the zoom margin
+    zoom_xmin = min_x_combined - zoom_margin
+    zoom_xmax = max_x_combined + zoom_margin
+    zoom_ymin = min_y_combined - zoom_margin
+    zoom_ymax = max_y_combined + zoom_margin
+
+    # --- 4. Plot Visual Elements ---
+    # Plot the condensate boundary
+    ax.plot(cx, cy, lw=4, c="#2E86AB", alpha=0.9, zorder=1)
+    ax.plot([cx[-1], cx[0]], [cy[-1], cy[0]], c="#2E86AB", lw=4, alpha=0.9, zorder=1)
+
+    # Plot the single RNA track
+    track_color = '#F24236'  # A single, distinct color for the track
+    ax.plot(track_data['x'], track_data['y'], color=track_color, alpha=0.8,
+            linewidth=3, zorder=2)
+
+    # Mark the start (circle) and end (square) points of the track
+    ax.plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o',
+            markersize=8, color=track_color, zorder=3, markerfacecolor='white',
+            markeredgewidth=2.5)
+    ax.plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s',
+            markersize=7, color=track_color, zorder=3, markerfacecolor=track_color,
+            markeredgewidth=1.5, alpha=0.9)
+
+    # Add a 1 µm scale bar to the corner of the zoomed view
+    scalebar_length_pixels = 1.0 / um_per_pixel
+    scale_x = zoom_xmax - scalebar_length_pixels - (0.05 * (zoom_xmax - zoom_xmin))
+    scale_y = zoom_ymax - (0.1 * (zoom_ymax - zoom_ymin))
+
+    ax.add_patch(Rectangle((scale_x, scale_y), scalebar_length_pixels, 3,
+                           facecolor='black', edgecolor='white', linewidth=1, zorder=4))
+
+    ax.text(scale_x + scalebar_length_pixels / 2, scale_y - 5, '1 μm',
+            ha='center', va='top', color='black', fontsize=12, fontweight='bold',
+            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.85),
+            zorder=5)
+
+    # --- 5. Finalize Plot and Save ---
+    ax.set_xlim(zoom_xmin, zoom_xmax)
+    ax.set_ylim(zoom_ymax, zoom_ymin)  # Invert Y-axis for standard image coordinates
+    ax.set_aspect('equal')
+    ax.axis('off')
+
+    ax.set_title(f'{experiment_name}\nCondensate {condensate_id} & RNA {int(track_id)}',
+                 fontsize=14, fontweight='bold', pad=10)
+
+    plt.tight_layout()
+
+    # Ensure the directory for the output file exists before saving
+    if save_path is not None:
+        output_dir = os.path.dirname(save_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor='white')
+        plt.close(fig)
+    else:
+        plt.show()
+
+
+
+
+
+
+
+
+
+
+def create_individual_experiment_montages(df_tracks,
+                                          df_condensates,
+                                          experiment_results, 
+                                          zoom_margin=25, montage_cols=4):
     """Create individual condensate montages for each experiment with automatic splitting for large datasets"""
     
     if not experiment_results:
@@ -323,7 +569,7 @@ def create_individual_experiment_montages(df_tracks, df_condensates, experiment_
                 elif montage_cols == 1:
                     axes = axes.reshape(-1, 1)
                 
-                axes_flat = axes.flatten()
+                axes_flat = np.array(axes).flatten()
                 
                 # Plot each condensate in this montage
                 for plot_idx, condensate_info in enumerate(montage_condensates):
@@ -451,25 +697,25 @@ def create_individual_experiment_montages(df_tracks, df_condensates, experiment_
                 )
                 
                 plt.tight_layout()
-                plt.subplots_adjust(top=0.90)
+                # plt.subplots_adjust(top=0.90)
                 
                 # Save individual montage with clean filename
                 safe_filename = experiment.replace(" ", "_").replace("/", "_").replace("\\", "_")
                 
-                if n_montages > 1:
-                    output_path = join(folder_path, f"condensate_montage_{safe_filename}_part{montage_idx + 1:02d}.png")
-                else:
-                    output_path = join(folder_path, f"condensate_montage_{safe_filename}.png")
+                # if n_montages > 1:
+                #     output_path = join(folder_path, f"condensate_montage_{safe_filename}_part{montage_idx + 1:02d}.png")
+                # else:
+                #     output_path = join(folder_path, f"condensate_montage_{safe_filename}.png")
                 
-                plt.savefig(
-                    output_path,
-                    format="png",
-                    bbox_inches="tight",
-                    dpi=300,
-                    facecolor='white'
-                )
+                # plt.savefig(
+                #     output_path,
+                #     format="png",
+                #     bbox_inches="tight",
+                #     dpi=300,
+                #     facecolor='white'
+                # )
                 plt.show()
-                plt.close()
+                # plt.close()
                 
                 if n_montages > 1:
                     print(f"      ✅ Saved: condensate_montage_{safe_filename}_part{montage_idx + 1:02d}.png")

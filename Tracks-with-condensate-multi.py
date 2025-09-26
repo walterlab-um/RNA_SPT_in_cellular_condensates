@@ -63,7 +63,6 @@ else:
 
 print("\n🎉 Data loading complete!")
 
-
 from util_montage import *
 
 # Deactivated for now to speed up testing

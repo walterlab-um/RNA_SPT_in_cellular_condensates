@@ -65,18 +65,20 @@ def parse_contour_string(cnt_str):
             return np.array([]), np.array([])
 
 # File matching logic (similar to your reference code)
-def find_matching_files(folder_path):
+def find_matching_files(folder_path, debug=False):
     """Find and match RNA and condensate files based on experiment names"""
     
     rna_folder = join(folder_path, "RNA")
     condensate_folder = join(folder_path, "condensate")
     
     if not os.path.exists(rna_folder):
-        print(f"❌ RNA folder not found: {rna_folder}")
+        if debug:
+            print(f"❌ RNA folder not found: {rna_folder}")
         return []
     
     if not os.path.exists(condensate_folder):
-        print(f"❌ Condensate folder not found: {condensate_folder}")
+        if debug:
+            print(f"❌ Condensate folder not found: {condensate_folder}")
         return []
     
     # Find RNA files
@@ -91,7 +93,8 @@ def find_matching_files(folder_path):
         if file.startswith("condensates_AIO") and file.endswith(".csv")
     ]
     
-    print(f"Found {len(rna_files)} RNA files and {len(condensate_files)} condensate files")
+    if debug:
+        print(f"Found {len(rna_files)} RNA files and {len(condensate_files)} condensate files")
     
     # Extract experiment names from RNA files
     experiment_names = []
@@ -125,14 +128,16 @@ def find_matching_files(folder_path):
         condensate_path = join(condensate_folder, condensate_file)
         
         file_pairs.append((rna_path, condensate_path, exp))
-        print(f"✅ Matched: {exp}")
+        if debug:
+            print(f"✅ Matched: {exp}")
     
     return file_pairs
 
-def load_dataset_pair(rna_path, condensate_path, experiment_name):
+def load_dataset_pair(rna_path, condensate_path, experiment_name, debug=False):
     """Load and process a single RNA-condensate dataset pair"""
     try:
-        print(f"  Loading {experiment_name}...")
+        if debug:
+            print(f"  Loading {experiment_name}...")
         
         # Load RNA tracks
         df_tracks_wide = pd.read_csv(rna_path)
@@ -144,10 +149,13 @@ def load_dataset_pair(rna_path, condensate_path, experiment_name):
         # Add experiment identifier
         df_tracks['experiment'] = experiment_name
         df_condensates['experiment'] = experiment_name
-        
-        print(f"    ✅ {len(df_tracks_wide)} tracks, {len(df_condensates)} condensate entries")
+
+        if debug:
+            print(f"    ✅ {len(df_tracks_wide)} tracks, {len(df_condensates)} condensate entries")
         return df_tracks, df_condensates
         
     except Exception as e:
-        print(f"    ❌ Error loading {experiment_name}: {e}")
+        if debug:
+            print(f"❌ Error loading {experiment_name}: {e}")
+            
         return None, None
