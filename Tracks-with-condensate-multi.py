@@ -1,6 +1,6 @@
 print("🎯 Multi-File RNA Trajectory Analysis with Folder Selection")
-from util import *
-from param import *
+from util.util import *
+from util.param import *
 
 # Folder selection
 print("Please choose a folder containing 'RNA' and 'condensate' subfolders:")
@@ -8,9 +8,9 @@ root = tk.Tk()
 root.withdraw()  # Hide the main window
 
 ### Changed these two lines to hardcode paths for easier running
-folder_path = "/Users/samm/Documents/Coding/github/RNA_spt_in_cell_dev/data"
-result_path = "/Users/samm/Documents/Coding/github/RNA_spt_in_cell_dev/result" # I added result_path to save outputs in a different folder
-img_path = "/Users/samm/Documents/Coding/github/RNA_spt_in_cell_dev/result/img" # I added img_path to save images to a different folder
+folder_path = "/Users/samm/Documents/Coding/github/RNA_SPT_in_cellular_condensates/data"
+result_path = "/Users/samm/Documents/Coding/github/RNA_SPT_in_cellular_condensates/result" # I added result_path to save outputs in a different folder
+img_path = "/Users/samm/Documents/Coding/github/RNA_SPT_in_cellular_condensates/result/img" # I added img_path to save images to a different folder
 
 print(f"Selected folder: {folder_path}")
 
@@ -63,7 +63,7 @@ else:
 
 print("\n🎉 Data loading complete!")
 
-from util_montage import *
+from util.util_montage import *
 
 # Deactivated for now to speed up testing
 

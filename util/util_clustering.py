@@ -71,6 +71,7 @@ def deconvolute_trajectory_data(file_path):
 
             # Sort the time points
             track_data = track_data.sort_values(by='t')
+            track_data.loc[:, 't_original'] = track_data['t']  # Keep original time
             track_data.loc[:, 't'] = track_data['t'] - track_data['t'].min()  # Normalize time to start at 0
             
             # Save to new CSV file
@@ -471,7 +472,7 @@ def plot_trajectories(cluster_labels,
             
             if trace_df['distance_um'].max() > 0.5:
                 count_above_threshold += 1
-                ax.plot(trace_df['t'], trace_df['distance_um'], color=color_map[label], alpha=0.3, zorder=11)
+                ax.plot(trace_df['t'], trace_df['distance_um'], color='grey', alpha=0.3, zorder=11)
                 
             else:
                 ax.plot(trace_df['t'], trace_df['distance_um'], color='grey', alpha=0.1, zorder=1)
@@ -535,7 +536,9 @@ def plot_clustering(embedding,
                  cluster_labels,
                  color_map,
                  t_max,
-                 save_path='result/cluster_img/cluster.png'):
+                 save_path=None,
+                 title=None
+                 ):
     
     fig, ax = plt.subplots(figsize=(10, 7))
 
@@ -548,14 +551,28 @@ def plot_clustering(embedding,
         if label == -1:
             ax.scatter(embedding[indices, 0], embedding[indices, 1], c='lightgray', s=20, label='Noise')
         else:
-            ax.scatter(embedding[indices, 0], embedding[indices, 1], c=[color_map[label]], s=50, label=f'Cluster {label}')
+            # ax.scatter(embedding[indices, 0], embedding[indices, 1], c=[color_map[label]], s=50, label=f'Cluster {label}')
+            sns.scatterplot(x=embedding[indices, 0],
+                            y=embedding[indices, 1],
+                            color=color_map[label],
+                            s=50,
+                            label=f'Cluster {label}',
+                            edgecolor='black',
+                            ax=ax)
 
-    plt.title(fr'UMAP Projection of Trajectories $t_{{\text{{max}}}}={t_max}$ s, # of clusters={len(np.unique(cluster_labels))}', fontsize=16)
+    if title:
+        plt.title(title, fontsize=16)
+    else:
+        plt.title(fr'UMAP Projection of Trajectories $t_{{\text{{max}}}}={t_max}$ s, # of clusters={len(np.unique(cluster_labels))}', fontsize=16)
+        
     ax.set_xlabel('UMAP Dimension 1', fontsize=16)
     ax.set_ylabel('UMAP Dimension 2', fontsize=16)
     ax.tick_params(axis='both', which='major', labelsize=16)
-    # plt.legend()
-    plt.savefig(save_path, dpi=300)
+    # Remove legend for cleaner look
+    ax.legend().remove()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300)
     plt.show()
 
 

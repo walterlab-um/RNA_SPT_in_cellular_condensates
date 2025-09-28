@@ -1,11 +1,31 @@
-from util import *
-from param import *
+from util.util import *
+from util.param import *
 from shapely.geometry import Point, Polygon
 from shapely.strtree import STRtree
 
 
-def legacy_analyze_interactions(df_tracks, df_condensates, proximity_threshold=1):
-    """Analyze track-condensate interactions across all experiments"""
+def legacy_analyze_interactions(df_tracks,
+                                df_condensates,
+                                proximity_threshold=1,
+                                debug=False):
+    """
+    Analyze track-condensate interactions across all experiments using a simple distance check.
+    A track is considered 'interacting' if any of its points are inside a condensate boundary.
+    
+    Args:
+        df_tracks (pd.DataFrame): DataFrame with track data.
+        df_condensates (pd.DataFrame): DataFrame with condensate data.
+        proximity_threshold (float): The distance in pixels from a condensate
+                                     boundary to classify a track as interacting.
+    Returns:
+        dict: A dictionary for each experiment containing:
+              - 'final_frame': The final frame number of the experiment.
+              - 'contour_boundaries': List of condensate boundary coordinates at final frame.
+              - 'interacting_tracks': Set of track IDs that interacted with any condensate.
+              - 'total_tracks': Total number of unique tracks in the experiment.
+              - 'total_condensates': Total number of unique condensates in the experiment.
+    
+    """
     
     def get_contour_coords(df_condensates, frame, experiment):
         """Get contour coordinates for specific frame and experiment"""
@@ -62,7 +82,7 @@ def legacy_analyze_interactions(df_tracks, df_condensates, proximity_threshold=1
             track_data = exp_tracks[
                 (exp_tracks['trackID'] == track_id) & 
                 (exp_tracks['t'] <= final_frame)
-            ].sort_values('t')
+                ].sort_values('t')
             
             # Check if any point in track is near a boundary
             for _, point in track_data.iterrows():
@@ -336,10 +356,10 @@ def create_individual_experiment_reconstructions(df_tracks,
 
 
 
-def create_trajectory_snapshots(track_df,
-                                condensate_df,
-                                exp_result,
+def create_trajectory_snapshots(df_tracks,
+                                exp_results,
                                 save_path=None,
+                                color_dict=None,
                                 zoom_margin=25):
     """
     Creates a single, zoomed-in snapshot for one RNA track interacting with one condensate.
@@ -355,98 +375,86 @@ def create_trajectory_snapshots(track_df,
     - save_path (str): The full file path (including filename and extension) to save the snapshot.
     - zoom_margin (int): Margin in pixels to apply around the interaction for the zoom window.
     """
-    if track_df.empty or condensate_df.empty or exp_result is None:
-        print("⚠️ Warning: Input track or condensate DataFrame or experiment result is empty. Cannot create snapshot.")
+    # Parameters for the figure layout
+
+    exp, result = list(exp_results.items())[0]
+    num_col = len(exp_results)
+    experiment = list(exp_results.keys())[0]
+    exp_tracks = df_tracks
+    final_frame = result['final_frame']
+    contour_boundaries = result['contour_boundaries']
+    interacting_tracks = result['interacting_tracks']
+
+    if not interacting_tracks:
+        print(f"❌ No interacting tracks found for {experiment}, skipping snapshot.")
         return
-
-    # --- 1. Extract Data from Inputs ---
-    track_data = track_df.sort_values('t')
-    track_id = track_data['trackID'].iloc[0]
-
-    # Extract contour for the single condensate
-    contour_str = condensate_df['contour_coord'].iloc[0]
-    cx, cy = parse_contour_string(contour_str)
-    cx, cy = np.array(cx), np.array(cy)
-
-    # Get metadata for titles and labels
-    experiment_name = exp_result.get('experiment', 'Unknown Experiment')
-    condensate_id = exp_result.get('condensate_idx', 1)
     
-    # --- 2. Set up the Plot ---
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.set_facecolor('white')
-
-    # --- 3. Calculate the Zoom Window ---
-    # Get the bounding box for the track and the condensate
-    min_x_combined = min(track_data['x'].min(), np.min(cx))
-    max_x_combined = max(track_data['x'].max(), np.max(cx))
-    min_y_combined = min(track_data['y'].min(), np.min(cy))
-    max_y_combined = max(track_data['y'].max(), np.max(cy))
-
-    # Apply the zoom margin
-    zoom_xmin = min_x_combined - zoom_margin
-    zoom_xmax = max_x_combined + zoom_margin
-    zoom_ymin = min_y_combined - zoom_margin
-    zoom_ymax = max_y_combined + zoom_margin
-
-    # --- 4. Plot Visual Elements ---
-    # Plot the condensate boundary
-    ax.plot(cx, cy, lw=4, c="#2E86AB", alpha=0.9, zorder=1)
-    ax.plot([cx[-1], cx[0]], [cy[-1], cy[0]], c="#2E86AB", lw=4, alpha=0.9, zorder=1)
-
-    # Plot the single RNA track
-    track_color = '#F24236'  # A single, distinct color for the track
-    ax.plot(track_data['x'], track_data['y'], color=track_color, alpha=0.8,
-            linewidth=3, zorder=2)
-
-    # Mark the start (circle) and end (square) points of the track
-    ax.plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o',
-            markersize=8, color=track_color, zorder=3, markerfacecolor='white',
-            markeredgewidth=2.5)
-    ax.plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s',
-            markersize=7, color=track_color, zorder=3, markerfacecolor=track_color,
-            markeredgewidth=1.5, alpha=0.9)
-
-    # Add a 1 µm scale bar to the corner of the zoomed view
-    scalebar_length_pixels = 1.0 / um_per_pixel
-    scale_x = zoom_xmax - scalebar_length_pixels - (0.05 * (zoom_xmax - zoom_xmin))
-    scale_y = zoom_ymax - (0.1 * (zoom_ymax - zoom_ymin))
-
-    ax.add_patch(Rectangle((scale_x, scale_y), scalebar_length_pixels, 3,
-                           facecolor='black', edgecolor='white', linewidth=1, zorder=4))
-
-    ax.text(scale_x + scalebar_length_pixels / 2, scale_y - 5, '1 μm',
-            ha='center', va='top', color='black', fontsize=12, fontweight='bold',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.85),
-            zorder=5)
-
-    # --- 5. Finalize Plot and Save ---
-    ax.set_xlim(zoom_xmin, zoom_xmax)
-    ax.set_ylim(zoom_ymax, zoom_ymin)  # Invert Y-axis for standard image coordinates
-    ax.set_aspect('equal')
-    ax.axis('off')
-
-    ax.set_title(f'{experiment_name}\nCondensate {condensate_id} & RNA {int(track_id)}',
-                 fontsize=14, fontweight='bold', pad=10)
-
-    plt.tight_layout()
-
-    # Ensure the directory for the output file exists before saving
-    if save_path is not None:
-        output_dir = os.path.dirname(save_path)
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-
-        plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor='white')
-        plt.close(fig)
-    else:
+    for track_id in interacting_tracks:
+        track_data = exp_tracks[
+            (exp_tracks['trackID'] == track_id) & 
+            (exp_tracks['t'] <= final_frame)
+        ].sort_values('t')
+        
+        if len(track_data) < 2:
+            print(f"⚠️ Track {track_id} has insufficient data points, skipping.")
+            continue
+        
+        # Find the closest condensate for this track
+        closest_condensate = None
+        min_distance = float('inf')
+        
+        for cx, cy in contour_boundaries:
+            for _, point in track_data.iterrows():
+                distances = np.sqrt((cx - point['x'])**2 + (cy - point['y'])**2)
+                if np.any(distances < min_distance):
+                    min_distance = np.min(distances)
+                    closest_condensate = (cx, cy)
+        
+        if closest_condensate is None:
+            print(f"⚠️ No condensate found for track {track_id}, skipping.")
+            continue
+        
+        cx, cy = closest_condensate
+        
+        # Calculate zoom window including all track points
+        min_x, max_x = np.min(cx), np.max(cx)
+        min_y, max_y = np.min(cy), np.max(cy)
+        
+        # Expand window to include track endpoints
+        min_x = min(min_x, track_data['x'].min())
+        max_x = max(max_x, track_data['x'].max())
+        min_y = min(min_y, track_data['y'].min())
+        max_y = max(max_y, track_data['y'].max())
+        
+        zoom_xmin = int(min_x - zoom_margin)
+        zoom_xmax = int(max_x + zoom_margin)
+        zoom_ymin = int(min_y - zoom_margin)
+        zoom_ymax = int(max_y + zoom_margin)
+        
+        # Create figure
+        fig, ax = plt.subplots(1, num_col, figsize=(4, num_col*4))
+        ax.set_facecolor('white')
+        
+        # Plot condensate boundary
+        ax.plot(cx, cy, lw=4, c="#2E86AB", alpha=0.9)
+        ax.plot([cx[-1], cx[0]], [cy[-1], cy[0]], c="#2E86AB", lw=4, alpha=0.9)
+        # Plot interacting track
+        ax.plot(track_data['x'], track_data['y'], lw=2, c="#D35400", alpha=0.8)
+        ax.plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o', markersize=6, color="#D35400", markerfacecolor='white', markeredgewidth=2)
+        ax.plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s', markersize=5, color="#D35400", markerfacecolor="#D35400", markeredgewidth=1, alpha=0.8)
+        # Add scale bar (1 μm for zoomed view)
+        ax.plot([zoom_xmin, zoom_xmin + 100], [zoom_ymax - 50, zoom_ymax - 50], lw=2, c="black")
+        ax.text(zoom_xmin + 50, zoom_ymax - 60, "1 μm", fontsize=12, ha='center')
+        # Set zoom limits
+        ax.set_xlim(zoom_xmin, zoom_xmax)
+        ax.set_ylim(zoom_ymin, zoom_ymax)
+        ax.set_aspect('equal')
+        
+        ax.axis('off')
+        ax.set_title(f"Track {track_id} in {experiment}", fontsize=14)
+        plt.tight_layout()
         plt.show()
-
-
-
-
-
-
+        
 
 
 
