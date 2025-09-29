@@ -16,6 +16,7 @@ import hdbscan
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 
+from util.color_palette import *
 
 common_time = np.linspace(0, 20, 100)  # Common time vector for interpolation
 
@@ -109,6 +110,8 @@ def load_and_prepare_trajectories(folder_path, file_pattern='2x', common_time=co
     
     if len(file_paths) == 1:
         original_traces = original_traces[0]  # Unwrap if only one file
+    else:
+        original_traces = [trace for sublist in original_traces for trace in sublist]  # Flatten the list
     
     return np.array(processed_traces), original_traces
 
@@ -271,7 +274,10 @@ def filter_and_interpolate_traces(traces,
         fig, ax = plt.subplots(1, 2, figsize=(14, 7))
 
         bin_width = 1
-        filter_bins = (np.arange(0, length_matrix.max() + bin_width, bin_width) - 0.5)
+        try:
+            filter_bins = (np.arange(0, length_matrix.max() + bin_width, bin_width) - 0.5)
+        except:
+            filter_bins = 10
 
         sns.histplot(length_matrix, bins=filter_bins, kde=False, ax=ax[0], stat='probability')
 
@@ -416,6 +422,84 @@ def umap_kmeans_clustering(data: pd.DataFrame,
 
 
 
+def sort_clusters_trajectory_representatives(cluster_labels, traces, common_time):
+    """Sorts the trajectory representatives for each cluster based on their distance.
+
+    Args:
+        cluster_labels (np.ndarray): The cluster labels for each trace.
+        traces (list of pd.DataFrame): The trajectory traces for each cluster.
+        common_time (np.ndarray): The common time axis for interpolation.
+        
+    Returns:
+        clusters_above_threshold: A dictionary with cluster labels as keys and their representative traces as values.
+        closest_trace: A dictionary with cluster labels as keys and their closest traces as values.
+        distance_rank: A dictionary with cluster labels as keys and their distance ranks as values.
+
+    """
+    # Initialize the parameters
+    unique_labels = np.unique(cluster_labels)    
+    count_above_threshold = {label: 0 for label in unique_labels}
+    
+    cluster_dict = {
+        'cluster_label': [],
+        'rank': [],
+        'representative_trace': [],
+        'mean_distance': [],
+        'std_distance': [],
+        'count_above_threshold': []
+    }
+    
+    for i, label in enumerate(unique_labels):
+        indices = np.where(cluster_labels == label)[0]
+        distance_list = []
+        
+        for trace_idx in indices:
+            trace_df = traces[trace_idx]
+            
+            interp_distance = np.interp(common_time, trace_df['t'], trace_df['distance_um'])
+            distance_list.append(interp_distance)
+
+            # Count the points above 0.5 um (threshold for significant movement)
+            if trace_df['distance_um'].max() > 0.5:
+                count_above_threshold[label] += 1
+
+        # Convert distance list to numpy array for easier manipulation
+        distance_list = np.array(distance_list)
+        
+        # Calculate mean and std at each time point
+        mean_distance = np.mean(distance_list, axis=0)
+        std_distance = np.std(distance_list, axis=0)
+
+        # Find the closest trajectory to the mean
+        closest_idx = np.argmin(np.linalg.norm(distance_list - mean_distance, axis=1))
+        cluster_dict['representative_trace'].append(traces[indices[closest_idx]]) # Store the closest trace (as a DataFrame)
+        
+        final_mean_distance = mean_distance[-1]
+        cluster_dict['rank'].append(final_mean_distance)
+        cluster_dict['cluster_label'].append(label)
+        cluster_dict['mean_distance'].append(mean_distance)
+        cluster_dict['std_distance'].append(std_distance)
+        cluster_dict['count_above_threshold'].append(count_above_threshold[label])
+    
+    # Convert rank to 1, 2, 3... based on sorting
+    sorted_indices = np.argsort(cluster_dict['rank'])[::-1]  # Descending order
+    for i, idx in enumerate(sorted_indices):
+        cluster_dict['rank'][idx] = i + 1
+    
+    # Sort the entire dictionary based on rank
+    cluster_dict = {key: [cluster_dict[key][i] for i in sorted_indices] for key in cluster_dict}
+    cluster_df = pd.DataFrame(cluster_dict)
+    
+    return cluster_df
+
+
+
+
+
+
+
+
+
 
 
 
@@ -425,11 +509,12 @@ def umap_kmeans_clustering(data: pd.DataFrame,
 
 
 def plot_trajectories(cluster_labels,
-                      filtered_traces,
+                      traces,
+                      cluster_df,
                       color_map,
                       t_max,
-                      n_neighbors
-                      ):
+                      smooth=True,
+                      save_path=None):
     """Plot trajectories for each cluster.
 
     Args:
@@ -442,86 +527,143 @@ def plot_trajectories(cluster_labels,
     Returns:
         _type_: _description_
     """
-    closest_trace = {}
-
     # Get the unique cluster labels that we need to plot
     unique_labels = np.unique(cluster_labels)
     n_clusters = len(unique_labels)
     n_cols = 2 # Number of plots you want in each row
     n_rows = math.ceil(n_clusters / n_cols) # Calculate rows needed
     # Create a figure that is large enough to hold the grid
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4.5 * n_rows), sharey=True)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 5 * n_rows), sharey=True)
 
     # Flatten the 2D array of axes into a 1D array for easy looping
     # This also handles the case where n_rows is 1
     axes = axes.flatten()
 
     # --- 3. Loop Through Clusters and Plot Trajectories ---
-    cluster_above_threshold = {label: 0 for label in unique_labels}
     for i, label in enumerate(unique_labels):
-        ax = axes[i] # Select the subplot for the current cluster
-        
-        # Find all trajectories that belong to this cluster
+        ax = axes[i]
         indices = np.where(cluster_labels == label)[0]
+        label_df = cluster_df[cluster_df['cluster_label'] == label]
         
-        distance_list = []
-        count_above_threshold = 0
-        # Plot each trajectory in this cluster
-        for trace_idx in indices:
-            trace_df = filtered_traces[trace_idx]
-            
-            if trace_df['distance_um'].max() > 0.5:
-                count_above_threshold += 1
-                ax.plot(trace_df['t'], trace_df['distance_um'], color='grey', alpha=0.3, zorder=11)
-                
-            else:
-                ax.plot(trace_df['t'], trace_df['distance_um'], color='grey', alpha=0.1, zorder=1)
-                distance_list.append(np.interp(common_time, trace_df['t'], trace_df['distance_um']))
-        
-        # Plot the average trajectory for this cluster
-        if distance_list:
-            distance_list = np.array(distance_list)
-            # Calculate the average trajectory
-            mean_distance = np.mean(distance_list, axis=0)
+        if smooth:
+            # Calculate mean and std deviation at each time point
+            mean_distance = label_df['mean_distance'].values[0]
+            std_distance = label_df['std_distance'].values[0]  # Reduce the std deviation for smoother shading
+            rank = label_df['rank'].values[0]
+
             # Plot the mean trajectory with a thicker line
-            ax.plot(common_time, mean_distance, color='black', linewidth=2, label='Mean Trajectory', zorder=20, linestyle='--')
+            ax.plot(common_time, mean_distance, color=color_map[label], linewidth=2, label='Mean Trajectory', zorder=rank, linestyle='--')
+            ax.fill_between(common_time,
+                            mean_distance - std_distance,
+                            mean_distance + std_distance,
+                            color=color_map[label],
+                            alpha=0.2,
+                            zorder=rank)
+            ax.axhline(0, color='grey', linewidth=1, linestyle='--', zorder=-1)
+        else:
+            # Iterate through each trajectory in the cluster and plot
+            for trace_idx in indices:
+                trace_df = traces[trace_idx]
+                ax.plot(trace_df['t'], trace_df['distance_um'], color=color_map[label], alpha=0.1, zorder=1)
             
-            # Find the closest trajectory to the mean
-            mean_idx = np.argmin(np.linalg.norm(distance_list - mean_distance, axis=1))
-            
-            closest_trace[label] = filtered_traces[indices[mean_idx]] # Store the closest trace (as a DataFrame)
-            print(f"Cluster {label}: Closest trace index {indices[mean_idx]} with max distance {filtered_traces[indices[mean_idx]]['distance_um'].max():.2f} μm")
+            ax.axhline(0, color='grey', linewidth=2, linestyle='--', zorder=2)
         
-        if count_above_threshold > 0:
-            cluster_above_threshold[label] = count_above_threshold
-            
-            
         # --- 4. Formatting for each Subplot ---
         ax.set_xlim(0, t_max)
-        ax.axhline(0, color='red', linewidth=0.8, linestyle='--', zorder=12)
+        
+        if smooth:
+            ax.set_yticks(np.arange(-1.0, 1.6, 0.2))
+            ax.set_ylim(-0.5, 0.5)
+        else:
+            ax.set_yticks(np.arange(-1.0, 1.6, 0.5))
+            ax.set_ylim(-1.0, 1.5)
         
         # Set the title, handling the noise case
-        title = f'Cluster {label} (n={len(indices)})' if label != -1 else f'Noise (n={len(indices)})'
-        ax.set_title(title, color=color_map[label] if label != -1 else 'black', fontsize=14)
+        title = f'Cluster {label}\n(n={len(indices)})' if label != -1 else f'Noise (n={len(indices)})'
         
-        ax.set_xlabel('Time (s)')
+        # Set the title as a text box, color-coded by cluster, at top-left
+        ax.text(0.05, 0.95, title, color=color_map[label] if label != -1 else 'black', fontsize=30,
+                ha='left', va='top', transform=ax.transAxes)
+        
+        ax.tick_params(axis='both', which='major', labelsize=30)
+        
+        if i % n_cols == 0:  # Only add y-axis label to the first column
+            ax.set_ylabel('distance, μm', fontsize=30)
+        else:
+            ax.set_ylabel('')
+        
+        if i >= (n_rows - 1) * n_cols:  # Only add x-axis label to the bottom row
+            ax.set_xlabel('time from first dwell event, s', fontsize=30)
+        else:
+            ax.set_xlabel('')
+            # Remove tick labels for x-axis
+            ax.set_xticklabels([])
+            
         ax.grid(True, linestyle='--', alpha=0.6)
 
-    # Add a y-axis label only to the first plot in each row for clarity
-    for i in range(n_rows):
-        axes[i * n_cols].set_ylabel('Distance (μm)')
-
     # --- 5. Clean Up and Display ---
-    plt.suptitle('Trajectory Shapes by Identified Cluster')
     plt.tight_layout() # Adjust layout to make room for suptitle
-
-    plt.savefig(f'result/cluster_img/n_neighbors={n_neighbors}, t_max={t_max}, n_clusters={n_clusters}.png', dpi=300)
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
 
-    if closest_trace is not None:
-        return cluster_above_threshold, closest_trace
-    else:
-        return cluster_above_threshold, None
+
+
+
+def plot_combined_trajectories(cluster_labels,
+                               cluster_df,
+                               color_map,
+                               t_max,
+                               save_path=None):
+    """_summary_
+
+    Args:
+        cluster_labels (_type_): _description_
+        cluster_df (_type_): _description_
+        color_map (_type_): _description_
+        t_max (_type_): _description_
+        save_path (_type_, optional): _description_. Defaults to None.
+    """
+    
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # Plot each cluster's trajectory
+    for label in np.unique(cluster_labels):
+        label_df = cluster_df[cluster_df['cluster_label'] == label]
+        
+        mean_distance = label_df['mean_distance'].values[0]
+        std_distance = label_df['std_distance'].values[0] * 0.5 # Reduce the std deviation for smoother shading
+        
+        ax.plot(common_time, mean_distance, color=color_map[label], linewidth=2, label=f'Cluster {label}', zorder=20, linestyle='--')
+        ax.fill_between(common_time,
+                        mean_distance - std_distance,
+                        mean_distance + std_distance,
+                        color=color_map[label],
+                        alpha=0.2,
+                        zorder=10)
+        
+    ax.axhline(0, color='grey', linewidth=1, linestyle='--', zorder=12)
+    
+    ax.set_yticks(np.arange(-1.0, 1.6, 0.2))
+    ax.set_ylim(-0.5, 0.5)
+    ax.set_xlim(0, t_max)
+    
+    ax.set_xlabel('time from first dwell event, s', fontsize=20)
+    ax.set_ylabel('distance, μm', fontsize=20)
+    ax.tick_params(axis='both', which='major', labelsize=20)
+    
+    # Put the legend outside the plot
+    ax.legend(title='Clusters', bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.6)
+    
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
+        
+
+
+
 
 
 
@@ -534,8 +676,8 @@ def plot_trajectories(cluster_labels,
 
 def plot_clustering(embedding,
                  cluster_labels,
+                 cluster_df,
                  color_map,
-                 t_max,
                  save_path=None,
                  title=None
                  ):
@@ -548,6 +690,10 @@ def plot_clustering(embedding,
     # Plot each cluster
     for label in unique_labels:
         indices = np.where(cluster_labels == label)[0]
+        label_df = cluster_df[cluster_df['cluster_label'] == label]
+        rank = label_df['rank'].values[0]
+        # Color based on rank
+
         if label == -1:
             ax.scatter(embedding[indices, 0], embedding[indices, 1], c='lightgray', s=20, label='Noise')
         else:
@@ -563,16 +709,19 @@ def plot_clustering(embedding,
     if title:
         plt.title(title, fontsize=16)
     else:
-        plt.title(fr'UMAP Projection of Trajectories $t_{{\text{{max}}}}={t_max}$ s, # of clusters={len(np.unique(cluster_labels))}', fontsize=16)
+        # plt.title(fr'UMAP Projection of Trajectories $t_{{\text{{max}}}}={t_max}$ s, # of clusters={len(np.unique(cluster_labels))}', fontsize=16)
+        pass
         
-    ax.set_xlabel('UMAP Dimension 1', fontsize=16)
-    ax.set_ylabel('UMAP Dimension 2', fontsize=16)
-    ax.tick_params(axis='both', which='major', labelsize=16)
+    ax.set_xlabel('UMAP Dimension 1', fontsize=20)
+    ax.set_ylabel('UMAP Dimension 2', fontsize=20)
+    ax.tick_params(axis='both', which='major', labelsize=20)
     # Remove legend for cleaner look
     ax.legend().remove()
 
+    plt.tight_layout()
     if save_path:
-        plt.savefig(save_path, dpi=300)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    
     plt.show()
 
 
@@ -589,6 +738,7 @@ def perform_clustering(data_matrix,
                        traces,
                        optimal_k,
                        t_max,
+                       data_name=None,
                        n_neighbors=5,
                        plot_cluster=True,
                        plot_rep=True,
@@ -601,18 +751,16 @@ def perform_clustering(data_matrix,
     Returns:
         cluster_labels: numpy array of shape (n_samples,), cluster assignments
     """
-    # --- 1. UMAP: The Mapmaker ---
-    # Create the low-dimensional map of your data.
-    reducer = umap.UMAP(n_neighbors=n_neighbors, min_dist=0.1, n_components=2, random_state=42)
-    embedding = reducer.fit_transform(data_matrix)
+    # --- 1. UMAP + KMeans Clustering ---
+    reducer, kmeans, embedding, kmeans.labels_ = umap_kmeans_clustering(data_matrix,
+                                                                       n_neighbors=n_neighbors,
+                                                                       min_dist=0.1,
+                                                                       n_clusters=optimal_k)
+    
+    cluster_labels = kmeans.labels_
+    N_CLUSTERS_TO_FIND = optimal_k
 
-    # --- 2. KMeans: The Census Taker ---
-    # Analyze the map to find a specific number of clusters.
-    N_CLUSTERS_TO_FIND = optimal_k  # Use the optimal number of clusters found
-    kmeans = KMeans(n_clusters=N_CLUSTERS_TO_FIND, random_state=42, n_init='auto')
-    cluster_labels = kmeans.fit_predict(embedding)
-
-    # --- 3. Report Results ---
+    # --- 2. Report Results ---
     print(f"Assigned data to {N_CLUSTERS_TO_FIND} clusters using KMeans.")
     for label in np.unique(cluster_labels):
         count = np.sum(cluster_labels == label)
@@ -620,30 +768,39 @@ def perform_clustering(data_matrix,
 
     print(f"Total traces: {len(cluster_labels)}")
     
-    # --- Plot 1: The UMAP Projection Colored by Cluster ---
     
-    if plot_cluster:
+    cluster_df = sort_clusters_trajectory_representatives(cluster_labels, traces, common_time)
+    cluster_rank = cluster_df[['cluster_label', 'rank']]
+    
+    # --- Plot 1: The UMAP Projection Colored by Cluster ---
+    if plot_cluster and data_name is not None:
         # Create a color palette
         unique_labels = np.unique(cluster_labels)
-        colors = sns.color_palette("deep", len(unique_labels))
-        color_map = {label: color for label, color in zip(unique_labels, colors)}
+        
+        # Use color_palette.py to get a consistent color mapping based on rank
+        color_palette = get_color_palette(n=len(unique_labels))  # Exclude noise
+        color_map = {row['cluster_label']: color_palette[row['rank'] - 1] for _, row in cluster_rank.iterrows()}
 
         # Plot the cluster
         plot_clustering(embedding,
                         cluster_labels,
+                        cluster_df,
                         color_map,
-                        t_max,
-                        save_path=f'result/cluster_img/UMAP_n_neighbors={n_neighbors}.png')
-
-        _, cluster_reps =  plot_trajectories(cluster_labels,
+                        save_path=f'result/cluster_img/{data_name}.png')
+    
+        # --- Plot 2: The Trajectories Colored by Cluster ---
+        plot_trajectories(cluster_labels,
                           traces,
+                          cluster_df,
                           color_map,
                           t_max,
-                          n_neighbors)
-
-    
-        return cluster_labels, embedding, cluster_reps
-    
-    else:
+                          smooth=False,
+                          save_path=f'result/cluster_trajectories/{data_name}.png')
         
-        return cluster_labels, embedding, None
+        plot_combined_trajectories(cluster_labels,
+                                   cluster_df,
+                                   color_map,
+                                   t_max,
+                                   save_path=f'result/combined_trajectories/{data_name}.png')
+
+    return cluster_labels, embedding, cluster_df

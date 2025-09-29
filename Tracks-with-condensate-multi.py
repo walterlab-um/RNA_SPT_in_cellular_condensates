@@ -14,6 +14,13 @@ img_path = "/Users/samm/Documents/Coding/github/RNA_SPT_in_cellular_condensates/
 
 print(f"Selected folder: {folder_path}")
 
+# Look up all subfolders in the data folder
+subfolders = [f.path for f in os.scandir(folder_path) if f.is_dir()]
+# Remove "archive" folder if it exists
+subfolders = [f for f in subfolders if "archive" not in f]
+
+subfolders.sort()  # Sort the subfolders alphabetically
+
 if not folder_path:
     print("❌ No folder selected. Exiting...")
     exit()
