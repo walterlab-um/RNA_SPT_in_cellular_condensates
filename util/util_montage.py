@@ -362,7 +362,6 @@ def plot_trajectory_snapshots(df_tracks,
                                 t_max=3,
                                 title=None,
                                 save_path=None,
-                                color_dict=None,
                                 um_per_pixel=0.1,  # Conversion factor
                                 window_size_um=5,  # Desired window size in micrometers
                                 scale_bar_um=1):   # Desired scale bar length in micrometers
@@ -441,7 +440,6 @@ def plot_trajectory_snapshots(df_tracks,
         
         # Create figure
         fig, ax = plt.subplots(1, num_col, figsize=(num_col*4, 4))
-        ax[0].set_facecolor('white')
         
         # Plot condensate boundary
         ax[0].plot(cx, cy, lw=4, c="#2E86AB", alpha=0.9)
@@ -494,8 +492,8 @@ def plot_trajectory_snapshots(df_tracks,
 
         plt.tight_layout()
         if save_path is not None:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.show()    
+            plt.savefig(save_path, dpi=300, bbox_inches='tight', transparent=True)
+        plt.show()
         
 
 

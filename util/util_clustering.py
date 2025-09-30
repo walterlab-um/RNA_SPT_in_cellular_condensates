@@ -643,8 +643,11 @@ def plot_combined_trajectories(cluster_labels,
         save_path (str, optional): Path to save the figure. Defaults to None.
     """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 7))
-
+        fig, ax = plt.subplots(figsize=(8, 7))
+        fontsize=30
+    else:
+        fontsize=20
+    
     unique_labels = np.unique(cluster_labels)
     rank = cluster_df[['cluster_label', 'rank']]
     rank = rank.set_index('cluster_label').loc[unique_labels].reset_index()
@@ -684,12 +687,12 @@ def plot_combined_trajectories(cluster_labels,
     ax.axhline(0, color='grey', linewidth=1, linestyle='--', zorder=12)
     
     ax.set_yticks(np.arange(-1.0, 1.6, 0.2))
-    ax.set_ylim(-0.5, 0.5)
+    ax.set_ylim(-0.4, 0.4)
     ax.set_xlim(0, t_max)
     
-    ax.set_xlabel('time from first dwell event, s', fontsize=20)
-    ax.set_ylabel('distance, μm', fontsize=20)
-    ax.tick_params(axis='both', which='major', labelsize=20)
+    ax.set_xlabel('time from first dwell event, s', fontsize=fontsize)
+    ax.set_ylabel('distance, μm', fontsize=fontsize)
+    ax.tick_params(axis='both', which='major', labelsize=fontsize)
     
     # Put the legend outside the plot
     # ax.legend(title='Clusters', bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=12)
@@ -717,6 +720,7 @@ def plot_clustering(embedding: np.ndarray,
                     cluster_labels: np.ndarray,
                     cluster_df: pd.DataFrame,
                     color_map: dict,
+                    legend: bool = False,
                     ax: plt.Axes = None,
                     save_path: str = "",
                     title: str = ""):
@@ -787,8 +791,8 @@ def plot_clustering(embedding: np.ndarray,
     y_min = y_center - max_length / 2
     y_max = y_center + max_length / 2
     
-    ax.set_xlim(x_min - 0.1 * abs(x_max - x_min), x_max + 0.1 * abs(x_max - x_min))
-    ax.set_ylim(y_min - 0.1 * abs(y_max - y_min), y_max + 0.1 * abs(y_max - y_min))
+    ax.set_xlim(x_min - 0.05 * abs(x_max - x_min), x_max + 0.05 * abs(x_max - x_min))
+    ax.set_ylim(y_min - 0.05 * abs(y_max - y_min), y_max + 0.05 * abs(y_max - y_min))
     
     # Remove x and y axis labels and ticks
     ax.set_xticks([])
@@ -803,7 +807,10 @@ def plot_clustering(embedding: np.ndarray,
     ax.spines['bottom'].set_visible(False)
 
     # Remove legend for cleaner look
-    ax.legend(loc='upper left', frameon=False, fontsize=24)
+    if legend:
+        ax.legend(loc='upper left', frameon=False, fontsize=32)
+    else:
+        ax.legend().remove()
 
     plt.tight_layout()
     
@@ -825,6 +832,7 @@ def plot_clustering(embedding: np.ndarray,
 def perform_clustering(data_matrix,
                        traces,
                        optimal_k,
+                       legend=False,
                        t_max=3,
                        plot_labels=[],
                        data_name=None,
@@ -883,6 +891,7 @@ def perform_clustering(data_matrix,
                         cluster_labels,
                         cluster_df,
                         color_map,
+                        legend=legend,
                         save_path=f'result/cluster_img/{data_name}.png')
     
         # --- Plot 2: The Trajectories Colored by Cluster ---
