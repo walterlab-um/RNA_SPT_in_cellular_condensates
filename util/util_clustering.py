@@ -8,6 +8,7 @@ import math
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.signal import savgol_filter
 
 
 # Clustering analysis utilities
@@ -446,7 +447,7 @@ def sort_clusters_trajectory_representatives(cluster_labels, traces, common_time
         'representative_trace': [],
         'mean_distance': [],
         'std_distance': [],
-        'count_above_threshold': []
+        'count_above_threshold': [],
     }
     
     for i, label in enumerate(unique_labels):
@@ -480,11 +481,11 @@ def sort_clusters_trajectory_representatives(cluster_labels, traces, common_time
         cluster_dict['mean_distance'].append(mean_distance)
         cluster_dict['std_distance'].append(std_distance)
         cluster_dict['count_above_threshold'].append(count_above_threshold[label])
-    
+
     # Convert rank to 1, 2, 3... based on sorting
     sorted_indices = np.argsort(cluster_dict['rank'])[::-1]  # Descending order
     for i, idx in enumerate(sorted_indices):
-        cluster_dict['rank'][idx] = i + 1
+        cluster_dict['rank'][idx] = i + 1    
     
     # Sort the entire dictionary based on rank
     cluster_dict = {key: [cluster_dict[key][i] for i in sorted_indices] for key in cluster_dict}
@@ -515,17 +516,17 @@ def plot_trajectories(cluster_labels,
                       t_max,
                       smooth=True,
                       save_path=None):
-    """Plot trajectories for each cluster.
+    """
+    Plot trajectories for each cluster.
 
     Args:
-        cluster_labels (_type_): _description_
-        filtered_traces (_type_): _description_
-        color_map (_type_): _description_
-        t_max (_type_): _description_
-        n_neighbors (_type_): _description_
-
-    Returns:
-        _type_: _description_
+        cluster_labels (np.ndarray): The cluster labels for each trajectory.
+        filtered_traces (list): A list of DataFrames containing the filtered traces.
+        color_map (dict): A dictionary mapping cluster labels to colors.
+        t_max (float): The maximum time point to plot.
+        n_neighbors (int): The number of neighbors to consider for smoothing.
+        smooth (bool, optional): Whether to plot smoothed mean trajectories. Defaults to True.
+        save_path (str, optional): Path to save the figure. Defaults to None.
     """
     # Get the unique cluster labels that we need to plot
     unique_labels = np.unique(cluster_labels)
@@ -539,6 +540,13 @@ def plot_trajectories(cluster_labels,
     # This also handles the case where n_rows is 1
     axes = axes.flatten()
 
+    rank = cluster_df[['cluster_label', 'rank']]
+    rank = rank.set_index('cluster_label').loc[unique_labels].reset_index()
+    rank = rank.sort_values(by='rank')
+    
+    # Sort unique_labels based on rank
+    unique_labels = rank['cluster_label'].values
+    
     # --- 3. Loop Through Clusters and Plot Trajectories ---
     for i, label in enumerate(unique_labels):
         ax = axes[i]
@@ -552,7 +560,11 @@ def plot_trajectories(cluster_labels,
             rank = label_df['rank'].values[0]
 
             # Plot the mean trajectory with a thicker line
-            ax.plot(common_time, mean_distance, color=color_map[label], linewidth=2, label='Mean Trajectory', zorder=rank, linestyle='--')
+            ax.plot(common_time, mean_distance,
+                    color=color_map[label],
+                    linewidth=2,
+                    label='Mean Trajectory',
+                    zorder=rank, linestyle='--')
             ax.fill_between(common_time,
                             mean_distance - std_distance,
                             mean_distance + std_distance,
@@ -579,8 +591,9 @@ def plot_trajectories(cluster_labels,
             ax.set_ylim(-1.0, 1.5)
         
         # Set the title, handling the noise case
-        title = f'Cluster {label}\n(n={len(indices)})' if label != -1 else f'Noise (n={len(indices)})'
-        
+        cluster_plot_label = label_df['plot_labels'].values[0] if 'plot_labels' in label_df else f'Cluster {label}'
+        title = f'{cluster_plot_label}\n(n={len(indices)})' if label != -1 else f'Noise (n={len(indices)})'
+
         # Set the title as a text box, color-coded by cluster, at top-left
         ax.text(0.05, 0.95, title, color=color_map[label] if label != -1 else 'black', fontsize=30,
                 ha='left', va='top', transform=ax.transAxes)
@@ -614,33 +627,59 @@ def plot_combined_trajectories(cluster_labels,
                                cluster_df,
                                color_map,
                                t_max,
+                               ax=None,
+                               smooth=False,
                                save_path=None):
-    """_summary_
+    """
+    Plot combined trajectories for each cluster.
 
     Args:
-        cluster_labels (_type_): _description_
-        cluster_df (_type_): _description_
-        color_map (_type_): _description_
-        t_max (_type_): _description_
-        save_path (_type_, optional): _description_. Defaults to None.
+        cluster_labels (np.ndarray): The cluster labels for each trajectory.
+        cluster_df (pd.DataFrame): DataFrame containing cluster information.
+        color_map (dict): Mapping of cluster labels to colors.
+        t_max (int): The maximum time for the x-axis.
+        ax (plt.Axes, optional): Matplotlib Axes to plot on. Creates new if None. Defaults to None.
+        smooth (bool, optional): Whether to plot smoothed mean trajectories. Defaults to False.
+        save_path (str, optional): Path to save the figure. Defaults to None.
     """
-    
-    fig, ax = plt.subplots(figsize=(10, 7))
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 7))
 
+    unique_labels = np.unique(cluster_labels)
+    rank = cluster_df[['cluster_label', 'rank']]
+    rank = rank.set_index('cluster_label').loc[unique_labels].reset_index()
+    rank = rank.sort_values(by='rank')
+    
+    # Sort unique_labels based on rank
+    unique_labels = rank['cluster_label'].values
+    
     # Plot each cluster's trajectory
-    for label in np.unique(cluster_labels):
+    for label in unique_labels:
         label_df = cluster_df[cluster_df['cluster_label'] == label]
+        rank = label_df['rank'].values[0]
         
         mean_distance = label_df['mean_distance'].values[0]
-        std_distance = label_df['std_distance'].values[0] * 0.5 # Reduce the std deviation for smoother shading
+        std_distance = label_df['std_distance'].values[0]
         
-        ax.plot(common_time, mean_distance, color=color_map[label], linewidth=2, label=f'Cluster {label}', zorder=20, linestyle='--')
+        if smooth:
+            # Smooth the mean distance using savgol
+            mean_distance = savgol_filter(mean_distance, window_length=11, polyorder=3)
+            std_distance = savgol_filter(std_distance, window_length=11, polyorder=3)
+        
+        ax.plot(common_time,
+                mean_distance,
+                color=color_map[label],
+                linewidth=2,
+                label=f'{label_df["plot_labels"].values[0] if "plot_labels" in label_df else f"Cluster {label}"}',
+                zorder=rank, # Higher rank means plotted on top (plots at the bottom are plotted on top)
+                linestyle='-')
+        
         ax.fill_between(common_time,
                         mean_distance - std_distance,
                         mean_distance + std_distance,
                         color=color_map[label],
                         alpha=0.2,
-                        zorder=10)
+                        zorder=rank)
         
     ax.axhline(0, color='grey', linewidth=1, linestyle='--', zorder=12)
     
@@ -653,13 +692,13 @@ def plot_combined_trajectories(cluster_labels,
     ax.tick_params(axis='both', which='major', labelsize=20)
     
     # Put the legend outside the plot
-    ax.legend(title='Clusters', bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=12)
-    ax.grid(True, linestyle='--', alpha=0.6)
+    # ax.legend(title='Clusters', bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=12)
+    # ax.grid(True, linestyle='--', alpha=0.6, zorder=-1)
     
     plt.tight_layout()
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
+        plt.show()
         
 
 
@@ -674,35 +713,50 @@ def plot_combined_trajectories(cluster_labels,
 
 
 
-def plot_clustering(embedding,
-                 cluster_labels,
-                 cluster_df,
-                 color_map,
-                 save_path=None,
-                 title=None
-                 ):
-    
-    fig, ax = plt.subplots(figsize=(10, 7))
+def plot_clustering(embedding: np.ndarray,
+                    cluster_labels: np.ndarray,
+                    cluster_df: pd.DataFrame,
+                    color_map: dict,
+                    ax: plt.Axes = None,
+                    save_path: str = "",
+                    title: str = ""):
+    """Plots the UMAP embedding colored by cluster labels.
+
+    Args:
+        embedding (np.ndarray): The UMAP embedding to plot.
+        cluster_labels (np.ndarray): The cluster labels for each point.
+        cluster_df (pd.DataFrame): DataFrame containing cluster information.
+        color_map (dict): Mapping of cluster labels to colors.
+        save_path (str, optional): Path to save the plot. Defaults to "".
+        title (str, optional): Title of the plot. Defaults to "".
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(10, 10))
 
     # Create a color palette
     unique_labels = np.unique(cluster_labels)
+    rank = cluster_df[['cluster_label', 'rank']]
+    rank = rank.set_index('cluster_label').loc[unique_labels].reset_index()
+    rank = rank.sort_values(by='rank')
+    
+    # Sort unique_labels based on rank
+    unique_labels = rank['cluster_label'].values
 
     # Plot each cluster
     for label in unique_labels:
         indices = np.where(cluster_labels == label)[0]
         label_df = cluster_df[cluster_df['cluster_label'] == label]
         rank = label_df['rank'].values[0]
-        # Color based on rank
-
+        
         if label == -1:
             ax.scatter(embedding[indices, 0], embedding[indices, 1], c='lightgray', s=20, label='Noise')
         else:
             # ax.scatter(embedding[indices, 0], embedding[indices, 1], c=[color_map[label]], s=50, label=f'Cluster {label}')
             sns.scatterplot(x=embedding[indices, 0],
                             y=embedding[indices, 1],
-                            color=color_map[label],
-                            s=50,
-                            label=f'Cluster {label}',
+                            color=color_map[label], # Color based on rank
+                            s=100,
+                            label=label_df['plot_labels'].values[0] if 'plot_labels' in label_df else f'Cluster {label}',
                             edgecolor='black',
                             ax=ax)
 
@@ -711,18 +765,52 @@ def plot_clustering(embedding,
     else:
         # plt.title(fr'UMAP Projection of Trajectories $t_{{\text{{max}}}}={t_max}$ s, # of clusters={len(np.unique(cluster_labels))}', fontsize=16)
         pass
-        
-    ax.set_xlabel('UMAP Dimension 1', fontsize=20)
-    ax.set_ylabel('UMAP Dimension 2', fontsize=20)
-    ax.tick_params(axis='both', which='major', labelsize=20)
+    
+    # Normalize the axis for better visualization
+    x_min, x_max = embedding[:, 0].min(), embedding[:, 0].max()
+    y_min, y_max = embedding[:, 1].min(), embedding[:, 1].max()
+    
+    # Calculate the length
+    x_length = x_max - x_min
+    y_length = y_max - y_min
+    
+    # Determine the maximum length
+    max_length = max(x_length, y_length)
+    
+    # Center the plot
+    x_center = (x_max + x_min) / 2
+    y_center = (y_max + y_min) / 2
+    
+    # Set limits to make the plot square
+    x_min = x_center - max_length / 2
+    x_max = x_center + max_length / 2
+    y_min = y_center - max_length / 2
+    y_max = y_center + max_length / 2
+    
+    ax.set_xlim(x_min - 0.1 * abs(x_max - x_min), x_max + 0.1 * abs(x_max - x_min))
+    ax.set_ylim(y_min - 0.1 * abs(y_max - y_min), y_max + 0.1 * abs(y_max - y_min))
+    
+    # Remove x and y axis labels and ticks
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+    
+    # Remove the frame
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+
     # Remove legend for cleaner look
-    ax.legend().remove()
+    ax.legend(loc='upper left', frameon=False, fontsize=24)
 
     plt.tight_layout()
+    
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    
-    plt.show()
+        plt.show()
+        
 
 
 
@@ -737,16 +825,23 @@ def plot_clustering(embedding,
 def perform_clustering(data_matrix,
                        traces,
                        optimal_k,
-                       t_max,
+                       t_max=3,
+                       plot_labels=[],
                        data_name=None,
                        n_neighbors=5,
-                       plot_cluster=True,
-                       plot_rep=True,
+                       plot_cluster=True
                        ):
     """
-    Performs UMAP dimensionality reduction followed by KMeans clustering.
+    Performs UMAP + KMeans clustering and plots the results.
+    
+    Args:
     data_matrix: numpy array of shape (n_samples, n_features)
+    traces: list of DataFrames, original trajectory data
     optimal_k: int, number of clusters to find
+    t_max: int, maximum time point for plotting
+    plot_labels: list of str, labels for each cluster for plotting
+    data_name: str, name of the dataset for saving plots
+    n_neighbors: int, number of neighbors for UMAP
     
     Returns:
         cluster_labels: numpy array of shape (n_samples,), cluster assignments
@@ -770,6 +865,8 @@ def perform_clustering(data_matrix,
     
     
     cluster_df = sort_clusters_trajectory_representatives(cluster_labels, traces, common_time)
+    cluster_df.loc[:, 'plot_labels'] = plot_labels
+    
     cluster_rank = cluster_df[['cluster_label', 'rank']]
     
     # --- Plot 1: The UMAP Projection Colored by Cluster ---

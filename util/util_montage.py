@@ -356,11 +356,16 @@ def create_individual_experiment_reconstructions(df_tracks,
 
 
 
-def create_trajectory_snapshots(df_tracks,
+def plot_trajectory_snapshots(df_tracks,
                                 exp_results,
+                                trace_df,
+                                t_max=3,
+                                title=None,
                                 save_path=None,
                                 color_dict=None,
-                                zoom_margin=25):
+                                um_per_pixel=0.1,  # Conversion factor
+                                window_size_um=5,  # Desired window size in micrometers
+                                scale_bar_um=1):   # Desired scale bar length in micrometers
     """
     Creates a single, zoomed-in snapshot for one RNA track interacting with one condensate.
 
@@ -368,19 +373,20 @@ def create_trajectory_snapshots(df_tracks,
     DataFrames are pre-filtered for one specific track and one specific condensate.
 
     Parameters:
-    - track_df (pd.DataFrame): DataFrame containing the data for a single track.
-    - condensate_df (pd.DataFrame): DataFrame containing the data for a single condensate.
-    - exp_result (dict): A dictionary with metadata for the event, used for labeling the plot.
-      Example: {'experiment': 'Experiment_A', 'trackID': 123, 'condensate_idx': 1}
-    - save_path (str): The full file path (including filename and extension) to save the snapshot.
-    - zoom_margin (int): Margin in pixels to apply around the interaction for the zoom window.
+    - df_tracks (pd.DataFrame): DataFrame containing the track data.
+    - exp_results (dict): A dictionary with metadata for the event.
+    - save_path (str): The full file path to save the snapshot.
+    - um_per_pixel (float): Conversion factor from micrometers to pixels.
+    - window_size_um (float): The fixed size of the square zoom window in micrometers.
+    - scale_bar_um (float): The length of the scale bar in micrometers.
     """
     # Parameters for the figure layout
+    window_size_px = window_size_um / um_per_pixel  # Convert window size to pixels
 
     exp, result = list(exp_results.items())[0]
-    num_col = len(exp_results)
+    num_col = 2
+    print(f"Length of exp_results: {num_col}")
     experiment = list(exp_results.keys())[0]
-    exp_tracks = df_tracks
     final_frame = result['final_frame']
     contour_boundaries = result['contour_boundaries']
     interacting_tracks = result['interacting_tracks']
@@ -390,9 +396,9 @@ def create_trajectory_snapshots(df_tracks,
         return
     
     for track_id in interacting_tracks:
-        track_data = exp_tracks[
-            (exp_tracks['trackID'] == track_id) & 
-            (exp_tracks['t'] <= final_frame)
+        track_data = df_tracks[
+            (df_tracks['trackID'] == track_id) & 
+            (df_tracks['t'] <= final_frame)
         ].sort_values('t')
         
         if len(track_data) < 2:
@@ -416,44 +422,80 @@ def create_trajectory_snapshots(df_tracks,
         
         cx, cy = closest_condensate
         
-        # Calculate zoom window including all track points
-        min_x, max_x = np.min(cx), np.max(cx)
-        min_y, max_y = np.min(cy), np.max(cy)
+        # Calculate the center of the combined bounding box of the track and condensate
+        min_x_cond, max_x_cond = np.min(cx), np.max(cx)
+        min_y_cond, max_y_cond = np.min(cy), np.max(cy)
         
-        # Expand window to include track endpoints
-        min_x = min(min_x, track_data['x'].min())
-        max_x = max(max_x, track_data['x'].max())
-        min_y = min(min_y, track_data['y'].min())
-        max_y = max(max_y, track_data['y'].max())
+        min_x_track, max_x_track = track_data['x'].min(), track_data['x'].max()
+        min_y_track, max_y_track = track_data['y'].min(), track_data['y'].max()
         
-        zoom_xmin = int(min_x - zoom_margin)
-        zoom_xmax = int(max_x + zoom_margin)
-        zoom_ymin = int(min_y - zoom_margin)
-        zoom_ymax = int(max_y + zoom_margin)
+        center_x = (min(min_x_cond, min_x_track) + max(max_x_cond, max_x_track)) / 2
+        center_y = (min(min_y_cond, min_y_track) + max(max_y_cond, max_y_track)) / 2
+        
+        # Set up a fixed-size zoom window in pixels
+        half_window_px = window_size_px / 2
+        zoom_xmin = int(center_x - half_window_px)
+        zoom_xmax = int(center_x + half_window_px)
+        zoom_ymin = int(center_y - half_window_px)
+        zoom_ymax = int(center_y + half_window_px)
         
         # Create figure
-        fig, ax = plt.subplots(1, num_col, figsize=(4, num_col*4))
-        ax.set_facecolor('white')
+        fig, ax = plt.subplots(1, num_col, figsize=(num_col*4, 4))
+        ax[0].set_facecolor('white')
         
         # Plot condensate boundary
-        ax.plot(cx, cy, lw=4, c="#2E86AB", alpha=0.9)
-        ax.plot([cx[-1], cx[0]], [cy[-1], cy[0]], c="#2E86AB", lw=4, alpha=0.9)
-        # Plot interacting track
-        ax.plot(track_data['x'], track_data['y'], lw=2, c="#D35400", alpha=0.8)
-        ax.plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o', markersize=6, color="#D35400", markerfacecolor='white', markeredgewidth=2)
-        ax.plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s', markersize=5, color="#D35400", markerfacecolor="#D35400", markeredgewidth=1, alpha=0.8)
-        # Add scale bar (1 μm for zoomed view)
-        ax.plot([zoom_xmin, zoom_xmin + 100], [zoom_ymax - 50, zoom_ymax - 50], lw=2, c="black")
-        ax.text(zoom_xmin + 50, zoom_ymax - 60, "1 μm", fontsize=12, ha='center')
-        # Set zoom limits
-        ax.set_xlim(zoom_xmin, zoom_xmax)
-        ax.set_ylim(zoom_ymin, zoom_ymax)
-        ax.set_aspect('equal')
+        ax[0].plot(cx, cy, lw=4, c="#2E86AB", alpha=0.9)
+        ax[0].plot([cx[-1], cx[0]], [cy[-1], cy[0]], c="#2E86AB", lw=4, alpha=0.9)
         
-        ax.axis('off')
-        ax.set_title(f"Track {track_id} in {experiment}", fontsize=14)
+        # Plot interacting track
+        ax[0].plot(track_data['x'], track_data['y'], lw=2, c="#F24236", alpha=0.8)
+        ax[0].plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o', markersize=6, color="#D35400", markerfacecolor='white', markeredgewidth=2)
+        ax[0].plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s', markersize=5, color="#D35400", markerfacecolor="#D35400", markeredgewidth=1, alpha=0.8)
+
+        print(track_data.columns)
+        
+        # Plot the trajectory after first dwell
+        first_dwell_time = trace_df['t_original'].iloc[0]
+        print(f"First dwell time: {first_dwell_time}, until {first_dwell_time + t_max}")
+        print(f"First time point int track_data: {track_data['t'].iloc[0]}")
+        post_dwell_data = track_data[(track_data['t'] >= first_dwell_time * 10) & (track_data['t'] < (first_dwell_time + t_max) * 10)] # Convert to frame number assuming 10 fps
+
+        if not post_dwell_data.empty:
+            ax[0].plot(post_dwell_data['x'], post_dwell_data['y'], lw=2, c='tab:green', alpha=0.8, zorder=12)
+            ax[0].plot(post_dwell_data.iloc[0]['x'], post_dwell_data.iloc[0]['y'], marker='o', markersize=6, color='tab:green', markerfacecolor='white', markeredgewidth=2, zorder=13)
+            ax[0].plot(post_dwell_data.iloc[-1]['x'], post_dwell_data.iloc[-1]['y'], marker='s', markersize=5, color='tab:green', markerfacecolor='tab:blue', markeredgewidth=1, alpha=0.8, zorder=13)
+
+        # Add scale bar
+        scale_bar_length_px = scale_bar_um / um_per_pixel
+        scale_bar_x_start = zoom_xmax - (0.5 * window_size_px)  # Position 5% from left
+        scale_bar_y = zoom_ymin + (0.05 * window_size_px)   # Position 5% from top
+        ax[0].plot([scale_bar_x_start, scale_bar_x_start + scale_bar_length_px], [scale_bar_y, scale_bar_y], lw=7, c="black")
+        # ax[0].text(scale_bar_x_start + scale_bar_length_px / 2, scale_bar_y - (0.075 * window_size_px), f"{scale_bar_um} μm", fontsize=12, ha='center', color='black')
+
+        # Set zoom limitss
+        ax[0].set_xlim(zoom_xmin, zoom_xmax)
+        ax[0].set_ylim(zoom_ymin, zoom_ymax)
+        ax[0].set_aspect('equal', adjustable='box')
+        ax[0].axis('off')
+        
+        
+        # Plot the trajectory distance
+        ax[1].plot(trace_df['t'], trace_df['distance_um'], lw=2, c='grey', alpha=0.8)
+        ax[1].set_xlabel("Time (s)", fontsize=12)
+        ax[1].set_ylabel("Distance (μm)", fontsize=12)
+        ax[1].tick_params(axis='both', which='major', labelsize=10)
+        ax[1].axhline(y=0, color='gray', linestyle='--', lw=1)
+        
+        ax[1].set_xlim(0, trace_df['t'].max())
+        ax[1].set_yticks(np.arange(-0.5, 0.6, 0.2))
+
+        if title is not None:
+            fig.suptitle(title, fontsize=16)
+
         plt.tight_layout()
-        plt.show()
+        if save_path is not None:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.show()    
         
 
 
