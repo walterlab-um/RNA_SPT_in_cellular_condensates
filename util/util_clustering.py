@@ -117,8 +117,49 @@ def load_and_prepare_trajectories(folder_path, file_pattern='2x', common_time=co
     return np.array(processed_traces), original_traces
 
 
-# --- Function to Preprocess The Data ---
+# --- Function to Load and Preprocess Data ---
+def load_and_prepare_multiple_trajectories(folder_path,
+                                           file_patterns=['2x'],
+                                           common_time=common_time):
+    """
+    Loads all trajectory CSVs from a folder and interpolates them to a fixed length.
+    
+    Args:
+        folder_path (str): Path to the folder with trajectory files.
+        n_points (int): The number of points to standardize each trajectory to.
+        file_pattern (str): A string to filter the csv files by their pattern.
 
+    Returns:
+        tuple: A tuple containing the processed data matrix (numpy array) and a list of original trajectories.
+    """
+    processed_traces = []
+    original_traces = []
+    file_paths = []
+
+    for pattern in file_patterns:
+        file_paths.extend(glob.glob(os.path.join(folder_path, f'*{pattern}*.csv')))
+    
+    print(f"Found {len(file_paths)} files matching patterns {file_patterns} in {folder_path}.")
+
+    for path in file_paths:
+        df = deconvolute_trajectory_data(path)
+        # Interpolate the distance values onto the common time axis
+        original_traces.append(df)
+        print(f"Loaded {os.path.basename(path)} with {len(df)} tracks.")
+        
+        for temp_df in df:
+            interp_distance = np.interp(common_time, temp_df['t'], temp_df['distance_um'])
+            processed_traces.append(interp_distance)
+    
+    if len(file_paths) == 1:
+        original_traces = original_traces[0]  # Unwrap if only one file
+    else:
+        original_traces = [trace for sublist in original_traces for trace in sublist]  # Flatten the list
+    
+    return np.array(processed_traces), original_traces
+
+
+# --- Function to Preprocess The Data ---
 def find_duration_histogram(traces,
                             show_plot=False):
     """Finds and plots the duration histogram of the given traces.
