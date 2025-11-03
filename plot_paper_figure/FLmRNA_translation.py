@@ -9,23 +9,27 @@ from rich.progress import track
 sns.set(color_codes=True, style="white")
 
 #––– Load Data –––
-folder = "/Users/esumrall/Desktop/RNA-in-HOPS_condensates/FL_translation_2x"
+# folder = "/Users/esumrall/Desktop/RNA-in-HOPS_condensates/FL_translation_2x"
+folder = "/Volumes/lsa-nwalter/Sam_Husna_turbo/HOPS-RNA-project/paper_figure_plots/Effect_traslation_FLmRNA"
+
 os.chdir(folder)
 
 lst_color = [
-    "#C51E3A",  # FL, 2x
-    "#9E0620",  # FL, 2x, puro
-    "#ED022A",  # FL, 2x, Har
-    "#B33E52",  # FL, 2x, CHX
-    "#7A2130",  # FL, 2x, 4EGI1
+    "#398bc3",  # FL, 2x
+    "#0077B6",  # FL, 2x, puro
+    "#0096c7",  # FL, 2x, Har
+    "#00B4D8",  # FL, 2x, CHX
+    "#48cae4",  # FL, 2x, 4EGI1
 ]
+
 lst_title = [
-    "FL mRNA, -",
-    "FL mRNA, +puromycin",
-    "FL mRNA, +harringtonine",
-    "FL mRNA, +cycloheximide",
-    "FL mRNA, +4EGI1",
+    "translation active",
+    "+puromycin",
+    "+harringtonine",
+    "+cycloheximide",
+    "+4EGI1",
 ]
+
 lst_fname = [
     "FL_2x",
     "FL_puro_2x",
@@ -37,6 +41,18 @@ lst_fname = [
 # Read dataframes
 lst_df = [pd.read_csv(f"colocalization_AIO_concat-{f}_100ms.csv") for f in lst_fname]
 
+conditions_label = [
+    "translation active",
+    "+puromycin",
+    "+harringtonine",
+    "+cycloheximide",
+    "+4EGI1",
+    "translation active",
+    "+puromycin",
+    "+harringtonine",
+    "+cycloheximide",
+    "+4EGI1"
+]
 
 #––– Helper Functions –––
 
@@ -160,7 +176,7 @@ for dt, key, col, title in zip(dwell_data, lst_fname, lst_color, lst_title):
     ax.spines[:].set_linewidth(1)
     ax.tick_params(labelsize=12, direction='in', length=5, width=1)
     plt.tight_layout()
-    plt.savefig(f"compare_dualexp_{key}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"compare_dualexp_{key}.svg", dpi=300, bbox_inches='tight', format='svg')
     plt.close()
 
 
@@ -184,12 +200,12 @@ plt.axvline((x[n-1]+x[n])/2, c='k', lw=0.5)
 for i in range(len(x)):
     plt.errorbar(x[i], lst_tau[i], yerr=lst_tau_se[i],
                  fmt='o', capsize=5, capthick=2, color=colors_full[i])
-plt.xticks(x, labels_full, rotation=45, ha='right', fontsize=10)
-plt.ylabel(r"$\tau$ (s)", fontsize=12)
-plt.gca().spines[:].set_linewidth(1.5)
-plt.gca().tick_params(labelsize=10, direction='in', length=5, width=1.5)
+plt.xticks(x, conditions_label, rotation=45, ha='right', fontsize=17)
+plt.ylabel(r"$\tau$ (s)", fontsize=17)
+plt.gca().spines[:].set_linewidth(1)
+plt.gca().tick_params(labelsize=17, direction='in', length=5, width=1.5)
 plt.tight_layout()
-plt.savefig("doterrorplot_tau_dual.png", dpi=300, bbox_inches='tight')
+plt.savefig("doterrorplot_tau_dual.svg", dpi=300, bbox_inches='tight', format='svg')
 plt.close()
 
 
@@ -210,11 +226,11 @@ plt.axvline((x[n-1]+x[n])/2, c='k', lw=0.5)
 for i in range(len(x)):
     plt.errorbar(x[i], lst_frac[i], yerr=lst_frac_se[i],
                  fmt='o', capsize=5, capthick=2, color=colors_full[i])
-plt.xticks(x, labels_frac, rotation=45, ha='right', fontsize=10)
+plt.xticks(x, conditions_label, rotation=45, ha='right', fontsize=17)
 plt.ylim(0,1.1)
-plt.ylabel("Fraction", fontsize=12)
-plt.gca().spines[:].set_linewidth(1.5)
-plt.gca().tick_params(labelsize=10, direction='in', length=5, width=1.5)
+plt.ylabel("Fraction", fontsize=17)
+plt.gca().spines[:].set_linewidth(1)
+plt.gca().tick_params(labelsize=17, direction='in', length=5, width=1.5)
 plt.tight_layout()
-plt.savefig("doterrorplot_frac_dual.png", dpi=300, bbox_inches='tight')
+plt.savefig("doterrorplot_frac_dual.svg", dpi=300, bbox_inches='tight', format='svg')
 plt.close()

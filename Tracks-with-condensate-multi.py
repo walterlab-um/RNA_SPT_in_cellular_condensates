@@ -8,7 +8,7 @@ root = tk.Tk()
 root.withdraw()  # Hide the main window
 
 ### Changed these two lines to hardcode paths for easier running
-folder_path = "/Users/samm/Documents/Coding/github/RNA_SPT_in_cellular_condensates/data"
+folder_path = "/Users/samm/Documents/Coding/github/RNA_SPT_in_cellular_condensates/data/mRNA-1x"
 result_path = "/Users/samm/Documents/Coding/github/RNA_SPT_in_cellular_condensates/result" # I added result_path to save outputs in a different folder
 img_path = "/Users/samm/Documents/Coding/github/RNA_SPT_in_cellular_condensates/result/img" # I added img_path to save images to a different folder
 
@@ -74,44 +74,45 @@ from util.util_montage import *
 
 # Deactivated for now to speed up testing
 
-# # Execute the analysis
-# if 'df_tracks_combined' in globals() and df_tracks_combined is not None:
-#     experiment_results = analyze_interactions_all_experiments(
-#         df_tracks_combined, 
-#         df_condensates_combined, 
-#         proximity_threshold
-#     )
+# Execute the analysis
+if 'df_tracks_combined' in globals() and df_tracks_combined is not None:
+    experiment_results = analyze_interactions_all_experiments(
+        df_tracks_combined, 
+        df_condensates_combined, 
+        proximity_threshold
+    )
     
-#     if experiment_results:
-#         create_individual_experiment_reconstructions(
-#             df_tracks_combined, 
-#             df_condensates_combined, 
-#             experiment_results,
-#             folder_path=folder_path
-#         )
-#     else:
-#         print("❌ No valid experiment results to plot")
-# else:
-#     print("❌ Combined datasets not loaded. Run the data loading block first.")
+    if experiment_results:
+        create_individual_experiment_reconstructions(
+            df_tracks_combined, 
+            df_condensates_combined, 
+            experiment_results,
+            folder_path=folder_path
+        )
+    else:
+        print("❌ No valid experiment results to plot")
+else:
+    print("❌ Combined datasets not loaded. Run the data loading block first.")
 
-# # Execute individual montage creation with error handling
-# if 'experiment_results' in globals() and experiment_results:
-#     try:
-#         create_individual_experiment_montages(
-#             df_tracks_combined,
-#             df_condensates_combined,
-#             experiment_results,
-#             zoom_margin=25,
-#             montage_cols=4  # Adjust as needed
-#         )
-#     except Exception as e:
-#         print(f"❌ Error in montage creation: {e}")
-#         print("Try reducing montage_cols or zoom_margin if the error persists")
-# else:
-#     print("❌ Experiment results not available. Run the reconstruction analysis first.")
+# Execute individual montage creation with error handling
+if 'experiment_results' in globals() and experiment_results:
+    try:
+        create_individual_experiment_montages(
+            df_tracks_combined,
+            df_condensates_combined,
+            experiment_results,
+            folder_path=folder_path,
+            zoom_margin=25,
+            montage_cols=4  # Adjust as needed
+        )
+    except Exception as e:
+        print(f"❌ Error in montage creation: {e}")
+        print("Try reducing montage_cols or zoom_margin if the error persists")
+else:
+    print("❌ Experiment results not available. Run the reconstruction analysis first.")
 
-# print("\n🎉 Individual experiment analysis complete!")
-# print(f"📁 All outputs saved in: {folder_path}")
+print("\n🎉 Individual experiment analysis complete!")
+print(f"📁 All outputs saved in: {folder_path}")
 
 
 

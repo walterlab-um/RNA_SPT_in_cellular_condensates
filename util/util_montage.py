@@ -280,15 +280,15 @@ def create_individual_experiment_reconstructions(df_tracks,
                     f'Total Tracks: {results["total_tracks"]}\n'
                     f'Condensates: {len(contour_boundaries)}')
         
-        ax.text(
-            10, 20,
-            info_text,
-            fontsize=16,
-            color='black',
-            fontweight='bold',
-            verticalalignment='top',
-            bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9)
-        )
+        # ax.text(
+        #     10, 20,
+        #     info_text,
+        #     fontsize=16,
+        #     color='black',
+        #     fontweight='bold',
+        #     verticalalignment='top',
+        #     bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9)
+        # )
         
         # Add scale bar
         if not exp_tracks.empty:
@@ -322,28 +322,29 @@ def create_individual_experiment_reconstructions(df_tracks,
         ax.axis('off')
         
         # Add title
-        ax.set_title(
-            f'RNA-Condensate Interactions: {experiment}',
-            fontsize=18, fontweight='bold', pad=20
-        )
+        # ax.set_title(
+        #     f'RNA-Condensate Interactions: {experiment}',
+        #     fontsize=18, fontweight='bold', pad=20
+        # )
         
         plt.tight_layout()
         
         # Save individual plot with clean filename
         safe_filename = experiment.replace(" ", "_").replace("/", "_").replace("\\", "_")
-        output_path = join(folder_path, f"reconstruction_{safe_filename}.png")
+        output_path = join(folder_path, f"reconstruction_{safe_filename}.svg")
 
         plt.savefig(
             output_path,
-            format="png",
+            format="svg",
             bbox_inches="tight",
             dpi=300,
-            facecolor='white'
+            facecolor='white',
+            transparent=True
         )
-        plt.show()
-        plt.close()
         
-        print(f"  ✅ Saved: reconstruction_{safe_filename}.png")
+        plt.close()
+
+        print(f"  ✅ Saved: reconstruction_{safe_filename}.svg")
     
     print(f"🎉 All {n_experiments} individual reconstructions created!")
 
@@ -501,7 +502,8 @@ def plot_trajectory_snapshots(df_tracks,
 
 def create_individual_experiment_montages(df_tracks,
                                           df_condensates,
-                                          experiment_results, 
+                                          experiment_results,
+                                          folder_path="",
                                           zoom_margin=25, montage_cols=4):
     """Create individual condensate montages for each experiment with automatic splitting for large datasets"""
     
@@ -694,12 +696,12 @@ def create_individual_experiment_montages(df_tracks,
                         facecolor='black', edgecolor='white', linewidth=1
                     ))
                     
-                    ax.text(
-                        scale_x + scalebar_length_pixels/2, scale_y - 5,
-                        '1 μm',
-                        ha='center', va='top', color='black', fontsize=9, fontweight='bold',
-                        bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.9)
-                    )
+                    # ax.text(
+                    #     scale_x + scalebar_length_pixels/2, scale_y - 5,
+                    #     '1 μm',
+                    #     ha='center', va='top', color='black', fontsize=9, fontweight='bold',
+                    #     bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.9)
+                    # )
                     
                     # Set zoom limits
                     ax.set_xlim(zoom_xmin, zoom_xmax)
@@ -707,13 +709,13 @@ def create_individual_experiment_montages(df_tracks,
                     ax.set_aspect('equal')
                     ax.axis('off')
                     
-                    # Add title with condensate and interaction info
-                    ax.set_title(
-                        f'Condensate {condensate_idx + 1}\n{len(tracks)} Interacting RNAs',
-                        fontsize=11,
-                        fontweight='bold',
-                        pad=10
-                    )
+                    # # Add title with condensate and interaction info
+                    # ax.set_title(
+                    #     f'Condensate {condensate_idx + 1}\n{len(tracks)} Interacting RNAs',
+                    #     fontsize=11,
+                    #     fontweight='bold',
+                    #     pad=10
+                    # )
                     
                     # Add legend if multiple tracks but not too many
                     if 1 < len(tracks) <= 4:
@@ -755,15 +757,15 @@ def create_individual_experiment_montages(df_tracks,
                 # else:
                 #     output_path = join(folder_path, f"condensate_montage_{safe_filename}.png")
                 
-                # plt.savefig(
-                #     output_path,
-                #     format="png",
-                #     bbox_inches="tight",
-                #     dpi=300,
-                #     facecolor='white'
-                # )
-                plt.show()
-                # plt.close()
+                plt.savefig(
+                    output_path,
+                    format="png",
+                    bbox_inches="tight",
+                    dpi=300,
+                    facecolor='white'
+                )
+                # plt.show()
+                plt.close()
                 
                 if n_montages > 1:
                     print(f"      ✅ Saved: condensate_montage_{safe_filename}_part{montage_idx + 1:02d}.png")

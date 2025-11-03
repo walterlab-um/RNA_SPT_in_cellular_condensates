@@ -555,7 +555,10 @@ def plot_trajectories(cluster_labels,
                       cluster_df,
                       color_map,
                       t_max,
+                      n_rows_cols=[2, 2],
                       smooth=True,
+                      plot_representatives=False,
+                      savefig_format='svg',
                       save_path=None):
     """
     Plot trajectories for each cluster.
@@ -572,8 +575,8 @@ def plot_trajectories(cluster_labels,
     # Get the unique cluster labels that we need to plot
     unique_labels = np.unique(cluster_labels)
     n_clusters = len(unique_labels)
-    n_cols = 2 # Number of plots you want in each row
-    n_rows = math.ceil(n_clusters / n_cols) # Calculate rows needed
+    n_cols = n_rows_cols[1]
+    n_rows = n_rows_cols[0]
     # Create a figure that is large enough to hold the grid
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 5 * n_rows), sharey=True)
 
@@ -606,6 +609,7 @@ def plot_trajectories(cluster_labels,
                     linewidth=2,
                     label='Mean Trajectory',
                     zorder=rank, linestyle='--')
+            
             ax.fill_between(common_time,
                             mean_distance - std_distance,
                             mean_distance + std_distance,
@@ -619,6 +623,14 @@ def plot_trajectories(cluster_labels,
                 trace_df = traces[trace_idx]
                 ax.plot(trace_df['t'], trace_df['distance_um'], color=color_map[label], alpha=0.1, zorder=1)
             
+            if plot_representatives:
+                # Plot the representative trajectory with a thicker line
+                representative_trace = label_df['representative_trace'].values[0]
+                ax.plot(representative_trace['t'], representative_trace['distance_um'],
+                        color='black',
+                        linewidth=2,
+                        zorder=2)
+            
             ax.axhline(0, color='grey', linewidth=2, linestyle='--', zorder=2)
         
         # --- 4. Formatting for each Subplot ---
@@ -629,7 +641,7 @@ def plot_trajectories(cluster_labels,
             ax.set_ylim(-0.5, 0.5)
         else:
             ax.set_yticks(np.arange(-1.0, 1.6, 0.5))
-            ax.set_ylim(-1.0, 1.5)
+            ax.set_ylim(-0.6, 1.2)
         
         # Set the title, handling the noise case
         cluster_plot_label = label_df['plot_labels'].values[0] if 'plot_labels' in label_df else f'Cluster {label}'
@@ -653,7 +665,7 @@ def plot_trajectories(cluster_labels,
             # Remove tick labels for x-axis
             ax.set_xticklabels([])
             
-        ax.grid(True, linestyle='--', alpha=0.6)
+        # ax.grid(True, linestyle='--', alpha=0.6)
 
     # --- 5. Clean Up and Display ---
     plt.tight_layout() # Adjust layout to make room for suptitle
@@ -670,6 +682,7 @@ def plot_combined_trajectories(cluster_labels,
                                t_max,
                                ax=None,
                                smooth=False,
+                               savefig_format='svg',
                                save_path=None):
     """
     Plot combined trajectories for each cluster.
@@ -741,7 +754,7 @@ def plot_combined_trajectories(cluster_labels,
     
     plt.tight_layout()
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', format=savefig_format)
         plt.show()
         
 
@@ -764,6 +777,7 @@ def plot_clustering(embedding: np.ndarray,
                     legend: bool = False,
                     ax: plt.Axes = None,
                     save_path: str = "",
+                    savefig_format: str = 'svg',
                     title: str = ""):
     """Plots the UMAP embedding colored by cluster labels.
 
@@ -856,7 +870,7 @@ def plot_clustering(embedding: np.ndarray,
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', format=savefig_format)
         plt.show()
         
 
@@ -878,7 +892,10 @@ def perform_clustering(data_matrix,
                        plot_labels=[],
                        data_name=None,
                        n_neighbors=5,
-                       plot_cluster=True
+                       n_rows_cols=[2, 2],
+                       plot_cluster=True,
+                       plot_representatives=False,
+                       savefig_format='svg'
                        ):
     """
     Performs UMAP + KMeans clustering and plots the results.
@@ -927,13 +944,15 @@ def perform_clustering(data_matrix,
         color_palette = get_color_palette(n=len(unique_labels))  # Exclude noise
         color_map = {row['cluster_label']: color_palette[row['rank'] - 1] for _, row in cluster_rank.iterrows()}
 
+        file_savename = f"{data_name}.{savefig_format}"
         # Plot the cluster
         plot_clustering(embedding,
                         cluster_labels,
                         cluster_df,
                         color_map,
                         legend=legend,
-                        save_path=f'result/cluster_img/{data_name}.png')
+                        savefig_format=savefig_format,
+                        save_path=f'result/cluster_img/{file_savename}',)
     
         # --- Plot 2: The Trajectories Colored by Cluster ---
         plot_trajectories(cluster_labels,
@@ -942,12 +961,17 @@ def perform_clustering(data_matrix,
                           color_map,
                           t_max,
                           smooth=False,
-                          save_path=f'result/cluster_trajectories/{data_name}.png')
+                          plot_representatives=plot_representatives,
+                          n_rows_cols=n_rows_cols,
+                          savefig_format=savefig_format,
+                          save_path=f'result/cluster_trajectories/{file_savename}')
         
+        # --- Plot 3: The Combined Trajectories ---
         plot_combined_trajectories(cluster_labels,
                                    cluster_df,
                                    color_map,
                                    t_max,
-                                   save_path=f'result/combined_trajectories/{data_name}.png')
+                                   savefig_format=savefig_format,
+                                   save_path=f'result/combined_trajectories/{file_savename}')
 
     return cluster_labels, embedding, cluster_df

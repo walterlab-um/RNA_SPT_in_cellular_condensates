@@ -9,15 +9,25 @@ from rich.progress import track
 sns.set(color_codes=True, style="white")
 
 #––– Load Data –––
-folder = "/Users/esumrall/Desktop/RNA-in-HOPS_condensates/THOR_and_THORdel_1x_2x"
+# folder = "/Users/esumrall/Desktop/RNA-in-HOPS_condensates/THOR_and_THORdel_1x_2x"
+folder = "/Volumes/lsa-nwalter/Sam_Husna_turbo/HOPS-RNA-project/paper_figure_plots/Effect_RBP_binding_THOR"
+
 os.chdir(folder)
 
+# color_map = {
+#     '1x':    "#6D89AD",
+#     '1xdel': "#B5C2F7",
+#     '2x':    "#0F183D",
+#     '2xdel': "#245696",
+# }
+
 color_map = {
-    '1x':    "#6D89AD",
-    '1xdel': "#B5C2F7",
-    '2x':    "#0F183D",
-    '2xdel': "#245696",
+    '1x':    "#e33228",
+    '1xdel': "#FF758F",
+    '2x':    "#398bc3",
+    '2xdel': "#90e0ef",
 }
+
 
 file_map = {
     '1x':    "colocalization_AIO_concat-THOR_1x_100ms.csv",
@@ -25,6 +35,17 @@ file_map = {
     '2x':    "colocalization_AIO_concat-THOR_2x_100ms.csv",
     '2xdel': "colocalization_AIO_concat-THORdel_2x_100ms.csv",
 }
+
+conditions_label = [
+    "isotonic, THOR",
+    "isotonic, THOR$\Delta$",
+    "hypertonic, THOR",
+    "hypertonic, THOR$\Delta$",
+    "isotonic, THOR",
+    "isotonic, THOR$\Delta$",
+    "hypertonic, THOR",
+    "hypertonic, THOR$\Delta$",   
+]
 
 # Read all dataframes
 dfs = {k: pd.read_csv(v) for k, v in file_map.items()}
@@ -169,7 +190,7 @@ for key, res in fit_results.items():
                    length=5, width=1)
     plt.legend(frameon=False, loc=4, fontsize=14)
     plt.tight_layout()
-    plt.savefig(f"compare_dualexp_{key}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"compare_dualexp_{key}.svg", dpi=300, bbox_inches='tight', format='svg')
     plt.close()
 
 
@@ -229,7 +250,7 @@ plt.ylabel("Fraction of Tracks", fontsize=16)
 plt.legend(title="Event Count", fontsize=12)
 plt.gca().spines[['right', 'top']].set_visible(False)
 plt.tight_layout()
-plt.savefig("stacked_event_fractions.png", dpi=300, bbox_inches='tight')
+plt.savefig("stacked_event_fractions.svg", dpi=300, bbox_inches='tight', format='svg')
 plt.close()
 
 #––– Dual‐Exp τ and Fraction Errorbar Plots –––
@@ -267,14 +288,14 @@ for i in range(len(lst_labels)):
         x_pos[i], lst_tau[i], yerr=lst_tau_se[i],
         fmt='o', capsize=5, capthick=2, color=lst_colors[i]
     )
-plt.xticks(x_pos, lst_labels, rotation=45, ha='right', fontsize=12)
+plt.xticks(x_pos, conditions_label, rotation=45, ha='right', fontsize=12)
 plt.xlim(-0.5, len(lst_labels)-0.5)
 plt.ylabel(r"$\tau$ (s)", fontsize=14)
-plt.gca().spines[:].set_linewidth(1.5)
+plt.gca().spines[:].set_linewidth(1)
 plt.gca().tick_params(axis='both', which='major', labelsize=12,
                       direction='in', length=5, width=1.5)
 plt.tight_layout()
-plt.savefig("doterrorplot_tau_dual.png", dpi=300, bbox_inches='tight')
+plt.savefig("doterrorplot_tau_dual.svg", dpi=300, bbox_inches='tight', format='svg')
 plt.close()
 
 # Prepare data for fraction errorbar plot (a1 then a2)
@@ -299,14 +320,15 @@ for i in range(len(lst_labels_frac)):
         x_pos[i], lst_frac[i], yerr=lst_frac_se[i],
         fmt='o', capsize=5, capthick=2, color=lst_colors[i]
     )
-plt.xticks(x_pos, lst_labels_frac, rotation=45, ha='right', fontsize=12)
+plt.xticks(x_pos, conditions_label, rotation=45, ha='right', fontsize=12)
 plt.xlim(-0.5, len(lst_labels_frac)-0.5)
 plt.ylim(0,1.1)
-plt.ylabel("Fraction", fontsize=14)
-plt.gca().spines[:].set_linewidth(1.5)
+plt.ylabel("fraction", fontsize=14)
+plt.gca().spines[:].set_linewidth(1)
 plt.gca().tick_params(axis='both', which='major', labelsize=12,
                       direction='in', length=5, width=1.5)
 plt.tight_layout()
-plt.savefig("doterrorplot_frac_dual.png", dpi=300, bbox_inches='tight')
+plt.savefig("doterrorplot_frac_dual.svg", dpi=300, bbox_inches='tight', format='svg')
 plt.close()
 
+print("------------------------------\nDone!")
