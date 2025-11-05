@@ -120,7 +120,7 @@ def load_and_prepare_trajectories(folder_path, file_pattern='2x', common_time=co
 # --- Function to Load and Preprocess Data ---
 def load_and_prepare_multiple_trajectories(folder_path,
                                            file_patterns=['2x'],
-                                           common_time=common_time):
+                                           common_time=None):
     """
     Loads all trajectory CSVs from a folder and interpolates them to a fixed length.
     
@@ -148,8 +148,11 @@ def load_and_prepare_multiple_trajectories(folder_path,
         print(f"Loaded {os.path.basename(path)} with {len(df)} tracks.")
         
         for temp_df in df:
-            interp_distance = np.interp(common_time, temp_df['t'], temp_df['distance_um'])
-            processed_traces.append(interp_distance)
+            if common_time is None:
+                processed_traces.append(temp_df['distance_um'].values)
+            else:
+                interp_distance = np.interp(common_time, temp_df['t'], temp_df['distance_um'])
+                processed_traces.append(interp_distance)
     
     if len(file_paths) == 1:
         original_traces = original_traces[0]  # Unwrap if only one file

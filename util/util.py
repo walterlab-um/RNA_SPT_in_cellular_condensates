@@ -14,6 +14,17 @@ from tkinter import filedialog as fd
 import tkinter as tk
 from tqdm import tqdm
 
+# Roboto font path
+roboto_path = 'design/Roboto-Regular.ttf'
+import matplotlib.font_manager as fm
+
+# Create a FontProperties object
+roboto_font = fm.FontProperties(fname=roboto_path)
+# Add the font to the font manager's list
+fm.fontManager.addfont(roboto_path)
+plt.rcParams.update({'font.size': 18, 'figure.figsize': (10, 7), 'font.family': 'sans-serif', 'font.sans-serif': ['Roboto']})
+
+
 def parse_list_string(list_str):
     """Safely parse string representation of list to actual list"""
     try:
