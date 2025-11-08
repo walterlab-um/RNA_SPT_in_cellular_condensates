@@ -17,7 +17,8 @@ def detect_RNA_condensate_interactions(exp_tracks_df,
     interaction_df = exp_tracks_df.copy()
     interaction_df['min_distance_to_condensate'] = np.nan
     interaction_df['nearest_condensate_id'] = -1
-    lock_condensate_target = False
+    lock_condensate_target = None
+    
     for frame, contour_id_list in condensate_by_frame.items():
         tracks_in_frame = exp_tracks_df[exp_tracks_df['t'] == frame]
         if tracks_in_frame.empty:
@@ -43,7 +44,9 @@ def detect_RNA_condensate_interactions(exp_tracks_df,
         for idx, row in tracks_in_frame.iterrows():
             point = Point(row['x'], row['y'])
             nearest_poly_index = spatial_index.nearest(point)
+            
             if nearest_poly_index is not None:
+                
                 if lock_condensate_target is False:
                     nearest_poly = shapely_polygons[nearest_poly_index]
                     distance = point.distance(nearest_poly.boundary)
@@ -52,6 +55,7 @@ def detect_RNA_condensate_interactions(exp_tracks_df,
                         distance = -distance
                         lock_condensate_target = True # Start focusing on this condensate only
                         nearest_poly = nearest_poly 
+                
                 else: # Lock to the first identified condensate
                     distance = point.distance(nearest_poly.boundary)
                     angle_to_contour = np.arctan2(nearest_poly.centroid.y - point.y, nearest_poly.centroid.x - point.x)
@@ -430,18 +434,20 @@ def create_individual_experiment_reconstructions(df_tracks,
 
 
 def plot_trajectory_snapshots(df_tracks,
-                                df_condensates,
-                                exp_results,
-                                trace_df,
-                                t_max=3,
-                                title=None,
-                                save_path=None,
-                                um_per_pixel=0.1,  # Conversion factor
-                                window_size_um=5,  # Desired window size in micrometers
-                                scale_bar_um=1,
-                                gradient_color=False,
-                                show_interaction=False
-                                ):   # Desired scale bar length in micrometers
+                              df_condensates,
+                              exp_results,
+                              trace_df,
+                              t_max: float = 3.0,
+                              title: str = "",
+                              save_path: str = "",
+                              um_per_pixel: float = 0.1,  # Conversion factor
+                              window_size_um: float = 5.0,  # Desired window size in micrometers
+                              scale_bar_um: float = 1.0, # Desired scale bar length in micrometers
+                              gradient_color: bool = False,
+                              show_interaction: bool = False,
+                              show_condensate_movements: bool = False,
+                              distance_by_interaction: bool = False,
+                              ):
     """
     Creates a single, zoomed-in snapshot for one RNA track interacting with one condensate.
 
@@ -508,23 +514,48 @@ def plot_trajectory_snapshots(df_tracks,
         zoom_ymin = int(center_y - half_window_px)
         zoom_ymax = int(center_y + half_window_px)
         
+        max_fps = 20
+        num_points = max_fps * 10  # 10 seconds at 20 fps
         if gradient_color:
             color_map = plt.get_cmap('viridis')
-            max_fps = 20
-            num_points = max_fps * 10  # 10 seconds at 20 fps
             frame_colors = [color_map(i / (num_points - 1)) for i in range(num_points)]
-        
+        else:
+            frame_colors = ["tab:blue" for _ in range(num_points)]
+            
         # Create figure
         fig, ax = plt.subplots(1, num_col, figsize=(num_col*4, 4))
         
         # Plot condensate boundary
-        patch = MplPolygon(np.column_stack((cx, cy)), closed=True, fill=True, edgecolor="#2E86AB", facecolor="#AED6F1", alpha=0.5, zorder=1)
-        ax[0].add_patch(patch)
-        # ax[0].plot(cx, cy, lw=1, c="#2E86AB", alpha=0.9)
+        if show_condensate_movements:
+            contour_list = interaction_info['shapely_contour'].values
+            print(f"Length of contour: {len(contour_list)} (frames:{len(track_data)})")
+            for contour in contour_list:
+                try:
+                    shapely_poly = wkt.loads(contour)
+                    patch = MplPolygon(list(shapely_poly.exterior.coords), closed=True, fill=True, edgecolor="#2E86AB", facecolor="#AED6F1", alpha=0.1, zorder=-1)
+                    ax[0].add_patch(patch)
+                except:
+                    continue
+        else:
+            patch = MplPolygon(np.column_stack((cx, cy)), closed=True, fill=True, edgecolor="#2E86AB", facecolor="#AED6F1", alpha=0.5, zorder=1)
+            ax[0].add_patch(patch)
+        
+        # ax[0].plot(cx, cy, lw=1, xc="#2E86AB", alpha=0.9)
         # ax[0].plot([cx[-1], cx[0]], [cy[-1], cy[0]], c="#2E86AB", lw=1, alpha=0.9)
         
         # Plot interacting track
-        if gradient_color:
+        if distance_by_interaction and gradient_color:
+            x = interaction_info['x']
+            y = interaction_info['y']
+            
+            ax[0].plot(x.iloc[0], y.iloc[0], marker='o', markersize=6, color=color_map(0), markerfacecolor='white', markeredgewidth=2)
+            ax[0].plot(x.iloc[-1], y.iloc[-1], marker='s', markersize=5, color=color_map(1), markerfacecolor=color_map(1), markeredgewidth=1, alpha=0.8)
+            num_points = len(x)
+            
+            for i in range(num_points - 1):
+                ax[0].plot(x.iloc[i:i+2], y.iloc[i:i+2], lw=2, c=frame_colors[i], alpha=0.8)
+            
+        elif gradient_color and not distance_by_interaction:
             num_points = len(track_data)
             for i in range(num_points - 1):
                 frame = int(track_data['t'].iloc[i])
@@ -537,7 +568,7 @@ def plot_trajectory_snapshots(df_tracks,
             ax[0].plot(track_data['x'], track_data['y'], lw=2, c="#F24236", alpha=0.8)
             ax[0].plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o', markersize=6, color="#D35400", markerfacecolor='white', markeredgewidth=2)
             ax[0].plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s', markersize=5, color="#D35400", markerfacecolor="#D35400", markeredgewidth=1, alpha=0.8)
-
+        
         
         if show_interaction:
             distance_um = interaction_info['min_distance_to_condensate']
@@ -549,7 +580,7 @@ def plot_trajectory_snapshots(df_tracks,
                 dy = distance_um.iloc[i] * np.sin((angle.iloc[i]))
                 end_point = (start_point[0] + dx, start_point[1] + dy)
                 ax[0].arrow(start_point[0], start_point[1], end_point[0]-start_point[0], end_point[1]-start_point[1],
-                        head_width=0.1, head_length=0.1, fc='red', ec='red', alpha=0.1)
+                        head_width=0.1, head_length=0.1, fc=frame_colors[i], ec=frame_colors[i], alpha=0.1)
         
         
         num_points_track = len(track_data)
@@ -577,8 +608,8 @@ def plot_trajectory_snapshots(df_tracks,
         # ax[0].text(scale_bar_x_start + scale_bar_length_px / 2, scale_bar_y - (0.075 * window_size_px), f"{scale_bar_um} μm", fontsize=12, ha='center', color='black')
 
         # Set zoom limitss
-        ax[0].set_xlim(zoom_xmin, zoom_xmax)
-        ax[0].set_ylim(zoom_ymin, zoom_ymax)
+        # ax[0].set_xlim(zoom_xmin, zoom_xmax)
+        # ax[0].set_ylim(zoom_ymin, zoom_ymax)
         ax[0].set_aspect('equal', adjustable='box')
         ax[0].axis('off')
         
