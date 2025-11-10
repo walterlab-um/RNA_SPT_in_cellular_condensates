@@ -17,7 +17,17 @@ def detect_RNA_condensate_interactions(exp_tracks_df,
     interaction_df = exp_tracks_df.copy()
     interaction_df['min_distance_to_condensate'] = np.nan
     interaction_df['nearest_condensate_id'] = -1
-    lock_condensate_target = None
+    locked_condensate = None
+    
+    def save_interaction_data(idx,frame, distance, condensate_id, is_interacting, shapely_contour, angle_to_contour, centroid_x, centroid_y):
+        interaction_df.at[idx, 'frame'] = frame
+        interaction_df.at[idx, 'min_distance_to_condensate'] = distance
+        interaction_df.at[idx, 'nearest_condensate_id'] = condensate_id
+        interaction_df.at[idx, 'is_interacting'] = is_interacting
+        interaction_df.at[idx, 'shapely_contour'] = shapely_contour.wkt  # Store WKT representation of the contour
+        interaction_df.at[idx, 'angle_to_contour'] = angle_to_contour
+        interaction_df.at[idx, 'centroid_x'] = centroid_x
+        interaction_df.at[idx, 'centroid_y'] = centroid_y
     
     for frame, contour_id_list in condensate_by_frame.items():
         tracks_in_frame = exp_tracks_df[exp_tracks_df['t'] == frame]
@@ -35,41 +45,53 @@ def detect_RNA_condensate_interactions(exp_tracks_df,
                 if not poly.is_empty:
                     shapely_polygons.append(poly)
                     condensate_ids.append(cid)
-        
-        if not shapely_polygons:
-            continue
 
-        spatial_index = STRtree(shapely_polygons)
+        if locked_condensate is not None:
+            if not shapely_polygons:
+                continue
+            spatial_index = STRtree(shapely_polygons)
+            for idx, row in tracks_in_frame.iterrows():
+                point = Point(row['x'], row['y'])
+                nearest_poly_index = spatial_index.nearest(point)    
+                if nearest_poly_index is not None:
+                    candidate_poly = shapely_polygons[nearest_poly_index]
+                    
+                    # Checking the distance of the candidate poly to the locked condensate
+                    if candidate_poly.distance(locked_condensate) <= 2: # 2 pixels
+                        locked_condensate = candidate_poly
+                        print(f"🔒 Locked condensate updated at frame {frame}", end="\r")
+                    else:
+                        distance_to_locked = candidate_poly.distance(locked_condensate)
+                        print(f"🔒 Locked condensate remains the same, distance: {distance_to_locked:.2f} μm", end="\r")
+                    
+                    distance = point.distance(locked_condensate.boundary) * um_per_pixel
+                    angle_to_contour = np.arctan2(locked_condensate.centroid.y - point.y, locked_condensate.centroid.x - point.x)
 
-        for idx, row in tracks_in_frame.iterrows():
-            point = Point(row['x'], row['y'])
-            nearest_poly_index = spatial_index.nearest(point)
-            
-            if nearest_poly_index is not None:
-                
-                if lock_condensate_target is False:
+                    if locked_condensate.contains(point):
+                        distance = -distance
+
+                    save_interaction_data(idx, frame, distance, condensate_ids[nearest_poly_index], True, locked_condensate, angle_to_contour, row['x'], row['y'])
+                else:
+                    print(f"⚠️ No nearest polygon found for point at frame {frame}")
+
+        else: # If locked_condensate is None
+            if not shapely_polygons:
+                continue
+            spatial_index = STRtree(shapely_polygons)
+            for idx, row in tracks_in_frame.iterrows():
+                point = Point(row['x'], row['y'])
+                nearest_poly_index = spatial_index.nearest(point)    
+                if nearest_poly_index is not None:
                     nearest_poly = shapely_polygons[nearest_poly_index]
-                    distance = point.distance(nearest_poly.boundary)
+                    distance = point.distance(nearest_poly.boundary) * um_per_pixel
                     angle_to_contour = np.arctan2(nearest_poly.centroid.y - point.y, nearest_poly.centroid.x - point.x)
+                    
                     if nearest_poly.contains(point):
                         distance = -distance
-                        lock_condensate_target = True # Start focusing on this condensate only
-                        nearest_poly = nearest_poly 
-                
-                else: # Lock to the first identified condensate
-                    distance = point.distance(nearest_poly.boundary)
-                    angle_to_contour = np.arctan2(nearest_poly.centroid.y - point.y, nearest_poly.centroid.x - point.x)
-                    if nearest_poly.contains(point):
-                        distance = -distance
-                        
-                interaction_df.at[idx, 'min_distance_to_condensate'] = distance
-                interaction_df.at[idx, 'nearest_condensate_id'] = condensate_ids[nearest_poly_index]
-                interaction_df.at[idx, 'is_interacting'] = nearest_poly.contains(point) or (distance <= proximity_threshold)
-                interaction_df.at[idx, 'shapely_contour'] = nearest_poly.wkt  # Store WKT representation of the contour
-                interaction_df.at[idx, 'angle_to_contour'] = angle_to_contour
-                interaction_df.at[idx, 'centroid_x'] = nearest_poly.centroid.x
-                interaction_df.at[idx, 'centroid_y'] = nearest_poly.centroid.y
-
+                        locked_condensate = nearest_poly # Lock the condensate
+                    
+                    save_interaction_data(idx, frame, distance, condensate_ids[nearest_poly_index], nearest_poly.contains(point) or (distance <= proximity_threshold), nearest_poly, angle_to_contour, row['x'], row['y'])
+            
     return interaction_df
 
 
@@ -496,7 +518,9 @@ def plot_trajectory_snapshots(df_tracks,
 
             shapely_contour_wkt = wkt.loads(interaction_info[interaction_info['nearest_condensate_id'] == first_interacting_condensate_id]['shapely_contour'].iloc[0])
             cx, cy = shapely_contour_wkt.exterior.xy
-
+        else:
+            cx, cy = 0, 0
+            
         # Calculate the center of the combined bounding box of the track and condensate
         min_x_cond, max_x_cond = np.min(cx), np.max(cx)
         min_y_cond, max_y_cond = np.min(cy), np.max(cy)
@@ -527,12 +551,15 @@ def plot_trajectory_snapshots(df_tracks,
         
         # Plot condensate boundary
         if show_condensate_movements:
+            frame_list = interaction_info['frame'].values
             contour_list = interaction_info['shapely_contour'].values
-            print(f"Length of contour: {len(contour_list)} (frames:{len(track_data)})")
-            for contour in contour_list:
+            
+            for i in range(len(contour_list)):
                 try:
-                    shapely_poly = wkt.loads(contour)
-                    patch = MplPolygon(list(shapely_poly.exterior.coords), closed=True, fill=True, edgecolor="#2E86AB", facecolor="#AED6F1", alpha=0.1, zorder=-1)
+                    shapely_poly = wkt.loads(contour_list[i])
+                    frame = int(frame_list[i])
+                    color = frame_colors[frame]
+                    patch = MplPolygon(list(shapely_poly.exterior.coords), closed=True, fill=True, edgecolor="#2E86AB", facecolor="#AED6F1", alpha=0.5, zorder=-1)
                     ax[0].add_patch(patch)
                 except:
                     continue
@@ -571,7 +598,7 @@ def plot_trajectory_snapshots(df_tracks,
         
         
         if show_interaction:
-            distance_um = interaction_info['min_distance_to_condensate']
+            distance_um = interaction_info['min_distance_to_condensate'] / um_per_pixel
             angle = interaction_info['angle_to_contour']
             x, y = track_data['x'], track_data['y']
             for i in range(len(x)-1):
@@ -581,7 +608,6 @@ def plot_trajectory_snapshots(df_tracks,
                 end_point = (start_point[0] + dx, start_point[1] + dy)
                 ax[0].arrow(start_point[0], start_point[1], end_point[0]-start_point[0], end_point[1]-start_point[1],
                         head_width=0.1, head_length=0.1, fc=frame_colors[i], ec=frame_colors[i], alpha=0.1)
-        
         
         num_points_track = len(track_data)
         num_points_trace = len(trace_df)
@@ -615,21 +641,39 @@ def plot_trajectory_snapshots(df_tracks,
         
         
         # Plot the trajectory distance
-        if gradient_color:
+        if gradient_color and not show_interaction:
             color_map = plt.get_cmap('viridis')
             num_points = len(trace_df)
             for i in range(num_points - 1):
                 frame = int(trace_df['t'].iloc[i]*10)
                 ax[1].plot(trace_df['t'].iloc[i:i+2], trace_df['distance_um'].iloc[i:i+2], lw=2, c=frame_colors[frame], alpha=0.8)
+
+        elif show_interaction:
+            y = interaction_info['min_distance_to_condensate']
+            x = interaction_info['frame'] / 10.0  # Convert to seconds assuming 10 fps
+            for i in range(len(x)-1):
+                ax[1].plot(x.iloc[i:i+2], y.iloc[i:i+2], lw=2, c=frame_colors[i], alpha=0.8)    
+            
+            ax2 = ax[1].twinx()
+            num_points = len(trace_df)
+            for i in range(num_points - 1):
+                ax2.plot(trace_df['t'].iloc[i:i+2], trace_df['distance_um'].iloc[i:i+2], lw=2, c='tab:red', alpha=0.5)            
+            
         else:
             ax[1].plot(trace_df['t'], trace_df['distance_um'], lw=2, c='grey', alpha=0.8)
+        
         ax[1].set_xlabel("Time (s)", fontsize=12)
         ax[1].set_ylabel("Distance (μm)", fontsize=12)
+        
         ax[1].tick_params(axis='both', which='major', labelsize=10)
         ax[1].axhline(y=0, color='gray', linestyle='--', lw=1)
-        
         ax[1].set_xlim(0, trace_df['t'].max())
-        ax[1].set_yticks(np.arange(-0.5, 0.6, 0.2))
+        
+        if show_interaction:
+            ylims = ax2.get_ylim()
+            ax[1].set_ylim(ylims)
+            ax2.tick_params(axis='y', labelcolor='tab:red', labelsize=10)
+            ax2.set_ylabel("Distance (μm) by bulk analysis", color='tab:red', fontsize=12)
 
         if title is not None:
             fig.suptitle(title, fontsize=16)
