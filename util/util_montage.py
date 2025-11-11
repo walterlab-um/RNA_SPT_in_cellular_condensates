@@ -7,7 +7,7 @@ from matplotlib.patches import Polygon as MplPolygon
 
 def detect_RNA_condensate_interactions(exp_tracks_df,
                                        exp_condensates_df,
-                                       proximity_threshold=1
+                                       condensate_detection_threshold=2.0 # in pixels to consider new interaction
                                        ):
     # Group condensates by frame for quick access
     # Add a unique condensate ID for each frame
@@ -57,7 +57,7 @@ def detect_RNA_condensate_interactions(exp_tracks_df,
                     candidate_poly = shapely_polygons[nearest_poly_index]
                     
                     # Checking the distance of the candidate poly to the locked condensate
-                    if candidate_poly.distance(locked_condensate) <= 2: # 2 pixels
+                    if candidate_poly.distance(locked_condensate) <= condensate_detection_threshold: # 2 pixels
                         locked_condensate = candidate_poly
                         print(f"🔒 Locked condensate updated at frame {frame}", end="\r")
                     else:
@@ -469,6 +469,7 @@ def plot_trajectory_snapshots(df_tracks,
                               show_interaction: bool = False,
                               show_condensate_movements: bool = False,
                               distance_by_interaction: bool = False,
+                              condensate_detection_threshold: float = 2.0
                               ):
     """
     Creates a single, zoomed-in snapshot for one RNA track interacting with one condensate.
@@ -510,7 +511,9 @@ def plot_trajectory_snapshots(df_tracks,
             continue
         
         # Use detect_RNA_condensate_interactions to find the condensate
-        interaction_info = detect_RNA_condensate_interactions(track_data, df_condensates[df_condensates['experiment'] == experiment])
+        interaction_info = detect_RNA_condensate_interactions(track_data, 
+                                                              df_condensates[df_condensates['experiment'] == experiment],
+                                                              condensate_detection_threshold=condensate_detection_threshold)
         
         # Find the most frequent condensate ID the track interacts with
         if 'nearest_condensate_id' in interaction_info.columns and not interaction_info['nearest_condensate_id'].isnull().all():
