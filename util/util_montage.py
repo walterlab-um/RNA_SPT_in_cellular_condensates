@@ -81,12 +81,14 @@ def detect_RNA_condensate_interactions(exp_tracks_df,
             for idx, row in tracks_in_frame.iterrows():
                 point = Point(row['x'], row['y'])
                 nearest_poly_index = spatial_index.nearest(point)    
+                
                 if nearest_poly_index is not None:
                     nearest_poly = shapely_polygons[nearest_poly_index]
                     distance = point.distance(nearest_poly.boundary) * um_per_pixel
                     angle_to_contour = np.arctan2(nearest_poly.centroid.y - point.y, nearest_poly.centroid.x - point.x)
                     
                     if nearest_poly.contains(point):
+                        # Condition: Condensate is not locked and RNA is inside condensate
                         distance = -distance
                         locked_condensate = nearest_poly # Lock the condensate
                     
