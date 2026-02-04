@@ -1,0 +1,4 @@
+Cluster Index,Cluster Label,Cluster Rank,Color,Num Traces,Trace Indices
+1,Escape,1,#AE2012,18,"[0, 1, 4, 8, 10, 11, 15, 17, 20, 22, 25, 28, 29, 30, 31, 34, 36, 40]"
+2,Boundary,2,#EE9B00,12,"[3, 7, 9, 13, 14, 19, 26, 27, 32, 35, 38, 39]"
+0,Confined,3,#94D2BD,14,"[2, 5, 6, 12, 16, 18, 21, 23, 24, 33, 37, 41, 42, 43]"
