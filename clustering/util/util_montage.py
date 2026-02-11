@@ -1,0 +1,1363 @@
+from util.util import *
+from util.param import *
+from shapely.geometry import Point, Polygon
+from shapely.strtree import STRtree
+from shapely import wkt
+from matplotlib.patches import Polygon as MplPolygon
+
+def detect_RNA_condensate_interactions(exp_tracks_df,
+                                       exp_condensates_df,
+                                       condensate_detection_threshold=2.0, # in pixels to consider new interaction
+                                       lock_by_condensate_distance=False,
+                                       ):
+    # Group condensates by frame for quick access
+    # Add a unique condensate ID for each frame
+    exp_condensates_df['condensate_id'] = exp_condensates_df.groupby('frame').cumcount()
+    condensate_by_frame = exp_condensates_df.groupby('frame')[['contour_coord', 'condensate_id']].apply(lambda x: list(x.itertuples(index=False, name=None))).to_dict()
+
+    interaction_df = exp_tracks_df.copy()
+    interaction_df['min_distance_to_condensate'] = np.nan
+    interaction_df['nearest_condensate_id'] = -1
+    locked_condensate = None
+    
+    def save_interaction_data(idx,frame, distance, condensate_id, is_interacting, shapely_contour, angle_to_contour, centroid_x, centroid_y):
+        interaction_df.at[idx, 'frame'] = frame
+        interaction_df.at[idx, 'min_distance_to_condensate'] = distance
+        interaction_df.at[idx, 'nearest_condensate_id'] = condensate_id
+        interaction_df.at[idx, 'is_interacting'] = is_interacting
+        interaction_df.at[idx, 'shapely_contour'] = shapely_contour.wkt  # Store WKT representation of the contour
+        interaction_df.at[idx, 'angle_to_contour'] = angle_to_contour
+        interaction_df.at[idx, 'centroid_x'] = centroid_x
+        interaction_df.at[idx, 'centroid_y'] = centroid_y
+    
+    for frame, contour_id_list in condensate_by_frame.items():
+        tracks_in_frame = exp_tracks_df[exp_tracks_df['t'] == frame]
+        if tracks_in_frame.empty:
+            continue
+
+        shapely_polygons = []
+        condensate_ids = []
+        for cnt_str, cid in contour_id_list:
+            bx, by = parse_contour_string(cnt_str)
+            if len(bx) >= 3:
+                poly = Polygon(zip(bx, by))
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                if not poly.is_empty:
+                    shapely_polygons.append(poly)
+                    condensate_ids.append(cid)
+
+        if locked_condensate is not None:
+            if not shapely_polygons:
+                continue
+            spatial_index = STRtree(shapely_polygons)
+            for idx, row in tracks_in_frame.iterrows():
+                point = Point(row['x'], row['y'])
+                nearest_poly_index = spatial_index.nearest(point)
+                
+                if nearest_poly_index is not None:
+                    candidate_poly = shapely_polygons[nearest_poly_index]
+                    
+                    # Checking the distance of the candidate poly to the locked condensate
+                    if candidate_poly.distance(locked_condensate) <= condensate_detection_threshold: # 2 pixels
+                        locked_condensate = candidate_poly
+                        print(f"🔒 Locked condensate updated at frame {frame}", end="\r")
+                    elif lock_by_condensate_distance:
+                        nearest_poly_to_locked_index = spatial_index.nearest(locked_condensate.centroid)
+                        if nearest_poly_to_locked_index is not None:
+                            candidate_poly_to_locked = shapely_polygons[nearest_poly_to_locked_index]
+                            if candidate_poly_to_locked.distance(locked_condensate) <= condensate_detection_threshold:
+                                locked_condensate = candidate_poly_to_locked
+                                print(f"🔒 Locked condensate updated at frame {frame}", end="\r")
+                        
+                        distance_to_locked = candidate_poly.distance(locked_condensate)
+                        print(f"🔒 Locked condensate remains the same, distance: {distance_to_locked:.2f} μm", end="\r")
+                    
+                    distance = point.distance(locked_condensate.boundary) * um_per_pixel
+                    angle_to_contour = np.arctan2(locked_condensate.centroid.y - point.y, locked_condensate.centroid.x - point.x)
+
+                    if locked_condensate.contains(point):
+                        distance = -distance
+
+                    save_interaction_data(idx, frame, distance, condensate_ids[nearest_poly_index], True, locked_condensate, angle_to_contour, row['x'], row['y'])
+                else:
+                    print(f"⚠️ No nearest polygon found for point at frame {frame}")
+
+        else: # If locked_condensate is None
+            if not shapely_polygons:
+                continue
+            spatial_index = STRtree(shapely_polygons)
+            for idx, row in tracks_in_frame.iterrows():
+                point = Point(row['x'], row['y'])
+                nearest_poly_index = spatial_index.nearest(point)    
+                
+                if nearest_poly_index is not None:
+                    nearest_poly = shapely_polygons[nearest_poly_index]
+                    distance = point.distance(nearest_poly.boundary) * um_per_pixel
+                    angle_to_contour = np.arctan2(nearest_poly.centroid.y - point.y, nearest_poly.centroid.x - point.x)
+                    
+                    if nearest_poly.contains(point):
+                        # Condition: Condensate is not locked and RNA is inside condensate
+                        distance = -distance
+                        locked_condensate = nearest_poly # Lock the condensate
+                    
+                    save_interaction_data(idx, frame, distance, condensate_ids[nearest_poly_index], nearest_poly.contains(point) or (distance <= proximity_threshold), nearest_poly, angle_to_contour, row['x'], row['y'])
+            
+    return interaction_df
+
+
+def get_contour_coords(df_condensates, frame, experiment):
+        """Get contour coordinates for specific frame and experiment"""
+        subset = df_condensates[
+            (df_condensates["frame"] == frame) & 
+            (df_condensates["experiment"] == experiment)
+        ]
+        contours = subset["contour_coord"].to_list()
+        parsed_contours = []
+        
+        for cnt in contours:
+            x, y = parse_contour_string(cnt)
+            if len(x) > 0:
+                parsed_contours.append((np.array(x), np.array(y)))
+        
+        return parsed_contours
+
+def analyze_interactions(df_tracks,
+                         df_condensates,
+                         proximity_threshold=1,
+                         debug=False):
+    """
+    Analyze track-condensate interactions across all experiments using shapely for spatial indexing.
+    A track is considered 'interacting' if any of its points are inside or within a given threshold of a condensate boundary.
+    
+    Args:
+        df_tracks (pd.DataFrame): DataFrame with track data.
+        df_condensates (pd.DataFrame): DataFrame with condensate data.
+        proximity_threshold (float): The distance in pixels from a condensate
+                                     boundary to classify a track as interacting.
+    Returns:
+        dict: A dictionary for each experiment containing:
+              - 'final_frame': The final frame number of the experiment.
+              - 'contour_boundaries': List of condensate boundary coordinates at final frame.
+              - 'interacting_tracks': Set of track IDs that interacted with any condensate.
+              - 'total_tracks': Total number of unique tracks in the experiment.
+              - 'total_condensates': Total number of unique condensates in the experiment.
+    
+    """
+    # Analyze each experiment separately
+    experiment_results = {}
+    
+    print("🔍 Analyzing interactions for each experiment using Shapely:")
+    
+    for experiment in df_tracks['experiment'].unique():
+        print(f"  Processing: {experiment}")
+        
+        exp_tracks = df_tracks[df_tracks['experiment'] == experiment]
+        exp_condensates = df_condensates[df_condensates['experiment'] == experiment]
+        
+        if exp_tracks.empty or exp_condensates.empty:
+            print(f"    ⚠️ Skipping {experiment} - missing data")
+            continue
+        
+        final_frame = int(exp_tracks['t'].max())
+        all_track_ids = set(exp_tracks['trackID'].unique())
+        interacting_track_ids = set()
+
+        condensates_by_frame = exp_condensates.groupby('frame')['contour_coord'].apply(list).to_dict()
+
+        for frame, contour_list in condensates_by_frame.items():
+            tracks_in_frame = exp_tracks[exp_tracks['t'] == frame]
+            if tracks_in_frame.empty:
+                continue
+
+            shapely_polygons = []
+            for cnt_str in contour_list:
+                bx, by = parse_contour_string(cnt_str)
+                if len(bx) >= 3:
+                    poly = Polygon(zip(bx, by))
+                    if not poly.is_valid:
+                        poly = poly.buffer(0)
+                    if not poly.is_empty:
+                        shapely_polygons.append(poly)
+            
+            if not shapely_polygons:
+                continue
+
+            spatial_index = STRtree(shapely_polygons)
+
+            for _, row in tracks_in_frame.iterrows():
+                if row['trackID'] in interacting_track_ids:
+                    continue
+                
+                point = Point(row['x'], row['y'])
+                
+                nearest_poly_index = spatial_index.nearest(point)
+                if nearest_poly_index is not None:
+                    nearest_poly = shapely_polygons[nearest_poly_index]
+                    if point.distance(nearest_poly) <= proximity_threshold:
+                        interacting_track_ids.add(row['trackID'])
+
+        contour_boundaries = get_contour_coords(exp_condensates, final_frame, experiment)
+        
+        experiment_results[experiment] = {
+            'final_frame': final_frame,
+            'contour_boundaries': contour_boundaries,
+            'interacting_tracks': interacting_track_ids,
+            'total_tracks': len(all_track_ids),
+            'total_condensates': len(contour_boundaries)
+        }
+        
+        print(f"    ✅ {len(interacting_track_ids)}/{len(all_track_ids)} tracks interacting "
+              f"with {len(contour_boundaries)} condensates")
+    
+    return experiment_results
+
+
+
+def analyze_interactions_all_experiments(df_tracks, df_condensates, proximity_threshold=1):
+    """
+    Analyzes track-condensate interactions and returns final frame data for plotting.
+
+    A track is considered 'interacting' if any of its points are inside a
+    condensate or within the specified proximity threshold of a condensate's
+    boundary at any frame during the experiment.
+
+    Args:
+        df_tracks (pd.DataFrame): DataFrame with track data.
+        df_condensates (pd.DataFrame): DataFrame with condensate data.
+        proximity_threshold (float): The distance in pixels from a condensate
+                                     boundary to classify a track as interacting.
+
+    Returns:
+        dict: A dictionary for each experiment containing the full analysis results
+              plus 'final_frame' and 'contour_boundaries' for visualization.
+    """
+    experiment_results = {}
+    print("🔍 Analyzing interactions for each experiment using spatial indexing:")
+
+    # Process each experiment separately
+    for experiment in df_tracks['experiment'].unique():
+        print(f"  Processing: {experiment}")
+
+        # Filter data for the current experiment
+        exp_tracks = df_tracks[df_tracks['experiment'] == experiment]
+        exp_condensates = df_condensates[df_condensates['experiment'] == experiment]
+
+        if exp_tracks.empty or exp_condensates.empty:
+            print(f"    ⚠️ Skipping {experiment} - missing track or condensate data.")
+            continue
+            
+        # Get final frame number for later use
+        final_frame = int(exp_tracks['t'].max())
+
+        # --- Full Interaction Analysis (across all frames) ---
+        interacting_track_ids = set()
+        all_track_ids = set(exp_tracks['trackID'].unique())
+        condensates_by_frame = exp_condensates.groupby('frame')['contour_coord'].apply(list).to_dict()
+
+        for frame, contour_str_list in condensates_by_frame.items():
+            if len(interacting_track_ids) == len(all_track_ids):
+                break
+            
+            tracks_in_frame = exp_tracks[exp_tracks['t'] == frame]
+            if tracks_in_frame.empty:
+                continue
+
+            shapely_polygons = []
+            for cnt_str in contour_str_list:
+                bx, by = parse_contour_string(cnt_str)
+                if len(bx) >= 3:
+                    poly = Polygon(zip(bx, by))
+                    if not poly.is_valid:
+                        poly = poly.buffer(0)
+                    if not poly.is_empty:
+                        shapely_polygons.append(poly)
+            
+            if not shapely_polygons:
+                continue
+
+            spatial_index = STRtree(shapely_polygons)
+            for _, track_point in tracks_in_frame.iterrows():
+                track_id = track_point['trackID']
+                if track_id in interacting_track_ids:
+                    continue
+
+                point = Point(track_point['x'], track_point['y'])
+                nearest_poly_index = spatial_index.nearest(point)
+                if nearest_poly_index is None:
+                    continue
+                
+                nearest_poly = shapely_polygons[nearest_poly_index]
+                distance = point.distance(nearest_poly.boundary)
+                if nearest_poly.contains(point):
+                    distance = -distance
+                
+                if distance <= proximity_threshold:
+                    interacting_track_ids.add(track_id)
+
+        # --- Retrieve Final Frame Boundaries for Plotting ---
+        contour_boundaries = []
+        final_frame_contours_str = exp_condensates[exp_condensates['frame'] == final_frame]['contour_coord'].tolist()
+        for cnt_str in final_frame_contours_str:
+            x, y = parse_contour_string(cnt_str)
+            if len(x) > 0:
+                contour_boundaries.append((np.array(x), np.array(y)))
+        
+        # --- Summarize and Store All Results ---
+        num_total_tracks = len(all_track_ids)
+        num_interacting_tracks = len(interacting_track_ids)
+
+        if 'label' in exp_condensates.columns:
+            num_condensates = len(exp_condensates['label'].unique())
+        else:
+            num_condensates = exp_condensates.groupby('frame').size().max() if not exp_condensates.empty else 0
+
+        experiment_results[experiment] = {
+            'final_frame': final_frame,
+            'contour_boundaries': contour_boundaries,
+            'interacting_tracks': interacting_track_ids,
+            'total_tracks': num_total_tracks,
+            'total_condensates': num_condensates
+        }
+        
+        print(f"    ✅ {num_interacting_tracks}/{num_total_tracks} tracks interacting "
+              f"with approx. {num_condensates} unique condensates.")
+    
+    return experiment_results
+
+
+
+
+
+
+
+
+
+
+
+def create_individual_experiment_reconstructions(df_tracks,
+                                                 df_condensates,
+                                                 experiment_results,
+                                                 folder_path):
+    """Create individual final reconstruction plots for each experiment"""
+    
+    n_experiments = len(experiment_results)
+    if n_experiments == 0:
+        print("❌ No experiments to plot!")
+        return
+    
+    print(f"📊 Creating {n_experiments} individual reconstruction plots...")
+    
+    # Create individual plot for each experiment
+    for experiment, results in track(experiment_results.items(), description="Creating reconstructions"):
+        
+        # Create single figure for this experiment
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+        ax.set_facecolor('white')
+        
+        # Get experiment-specific data
+        exp_tracks = df_tracks[df_tracks['experiment'] == experiment]
+        final_frame = results['final_frame']
+        contour_boundaries = results['contour_boundaries']
+        interacting_tracks = results['interacting_tracks']
+        
+        # Plot condensate boundaries
+        for cx, cy in contour_boundaries:
+            ax.plot(cx, cy, lw=3, c="#2E86AB", alpha=0.8)  # Professional blue
+            ax.plot([cx[-1], cx[0]], [cy[-1], cy[0]], c="#2E86AB", lw=3, alpha=0.8)
+        
+        # Plot ONLY interacting tracks
+        for track_id in interacting_tracks:
+            full_track_data = exp_tracks[
+                (exp_tracks['trackID'] == track_id) & 
+                (exp_tracks['t'] <= final_frame)
+            ].sort_values('t')
+            
+            if len(full_track_data) > 1:
+                ax.plot(
+                    full_track_data['x'], full_track_data['y'],
+                    color='#F24236',  # Professional red
+                    alpha=0.7,
+                    linewidth=2
+                )
+        
+        # Add experiment info (larger for individual plot)
+        time_seconds = final_frame * s_per_frame
+        info_text = (f'{experiment}\n'
+                    f'{time_seconds:.1f}s\n'
+                    f'Interacting: {len(interacting_tracks)}\n'
+                    f'Total Tracks: {results["total_tracks"]}\n'
+                    f'Condensates: {len(contour_boundaries)}')
+        
+        # ax.text(
+        #     10, 20,
+        #     info_text,
+        #     fontsize=16,
+        #     color='black',
+        #     fontweight='bold',
+        #     verticalalignment='top',
+        #     bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9)
+        # )
+        
+        # Add scale bar
+        if not exp_tracks.empty:
+            x_range = exp_tracks['x'].max() - exp_tracks['x'].min()
+            y_range = exp_tracks['y'].max() - exp_tracks['y'].min()
+            
+            scalebar_length_pixels = 2.0 / um_per_pixel
+            margin = 15
+            
+            scale_x = exp_tracks['x'].max() - scalebar_length_pixels - margin
+            scale_y = exp_tracks['y'].max() - margin - 4
+            
+            ax.add_patch(Rectangle(
+                (scale_x, scale_y), scalebar_length_pixels, 4,
+                facecolor='black', edgecolor='white', linewidth=1
+            ))
+            
+            ax.text(
+                scale_x + scalebar_length_pixels/2, scale_y - 10,
+                '2 μm',
+                ha='center', va='top', color='black', fontsize=12, fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8)
+            )
+            
+            # Set limits with margin
+            margin_pixels = max(x_range, y_range) * 0.05
+            ax.set_xlim(exp_tracks['x'].min() - margin_pixels, exp_tracks['x'].max() + margin_pixels)
+            ax.set_ylim(exp_tracks['y'].max() + margin_pixels, exp_tracks['y'].min() - margin_pixels)
+        
+        ax.set_aspect('equal')
+        ax.axis('off')
+        
+        # Add title
+        # ax.set_title(
+        #     f'RNA-Condensate Interactions: {experiment}',
+        #     fontsize=18, fontweight='bold', pad=20
+        # )
+        
+        plt.tight_layout()
+        
+        # Save individual plot with clean filename
+        safe_filename = experiment.replace(" ", "_").replace("/", "_").replace("\\", "_")
+        output_path = join(folder_path, f"reconstruction_{safe_filename}.svg")
+
+        plt.savefig(
+            output_path,
+            format="svg",
+            bbox_inches="tight",
+            dpi=300,
+            facecolor='white',
+            transparent=True
+        )
+        
+        plt.close()
+
+        print(f"  ✅ Saved: reconstruction_{safe_filename}.svg")
+    
+    print(f"🎉 All {n_experiments} individual reconstructions created!")
+
+
+
+
+
+        
+        
+        
+        
+        
+        
+        
+
+def create_individual_experiment_montages(df_tracks,
+                                          df_condensates,
+                                          experiment_results,
+                                          folder_path="",
+                                          zoom_margin=25, montage_cols=4):
+    """Create individual condensate montages for each experiment with automatic splitting for large datasets"""
+    
+    if not experiment_results:
+        print("❌ No experiment results available!")
+        return
+    
+    # Calculate safe limits to avoid matplotlib size errors
+    max_pixels = 2**16  # Maximum image dimension
+    subplot_height_pixels = 4 * 300  # 4 inches * 300 DPI
+    max_safe_rows = (max_pixels // subplot_height_pixels) - 2  # Safety margin
+    max_condensates_per_montage = max_safe_rows * montage_cols
+    
+    print(f"📊 Creating condensate montages for {len(experiment_results)} experiments...")
+    print(f"   Maximum condensates per montage: {max_condensates_per_montage}")
+    
+    # Track colors for variety
+    track_colors = ['#F24236', '#E66100', '#A63603', '#D95F02', '#CC79A7', 
+                   '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00']
+    
+    # Process each experiment individually
+    for experiment, results in track(experiment_results.items(), description="Creating montages"):
+        
+        print(f"  Processing montage for: {experiment}")
+        
+        exp_tracks = df_tracks[df_tracks['experiment'] == experiment]
+        final_frame = results['final_frame']
+        contour_boundaries = results['contour_boundaries']
+        interacting_tracks = results['interacting_tracks']
+        
+        # Collect condensates with interactions for this experiment
+        experiment_condensate_data = []
+        
+        for condensate_idx, (cx, cy) in enumerate(contour_boundaries):
+            # Find tracks that interact with this specific condensate
+            condensate_interacting_tracks = []
+            
+            for track_id in interacting_tracks:
+                track_data = exp_tracks[
+                    (exp_tracks['trackID'] == track_id) & 
+                    (exp_tracks['t'] <= final_frame)
+                ].sort_values('t')
+                
+                # Check if track interacts with THIS condensate
+                track_interacts = False
+                for _, point in track_data.iterrows():
+                    distances = np.sqrt((cx - point['x'])**2 + (cy - point['y'])**2)
+                    if np.any(distances <= proximity_threshold):
+                        track_interacts = True
+                        break
+                
+                if track_interacts and len(track_data) > 1:
+                    condensate_interacting_tracks.append(track_data)
+            
+            # Only include condensates with interacting tracks
+            if condensate_interacting_tracks:
+                experiment_condensate_data.append({
+                    'condensate_idx': condensate_idx,
+                    'contour': (cx, cy),
+                    'interacting_tracks': condensate_interacting_tracks
+                })
+        
+        if not experiment_condensate_data:
+            print(f"    ⚠️ No condensates with interacting tracks found for {experiment}")
+            continue
+        
+        n_condensates = len(experiment_condensate_data)
+        print(f"    Found {n_condensates} condensates with interactions")
+        
+        # Split into multiple montages if needed
+        if n_condensates > max_condensates_per_montage:
+            n_montages = (n_condensates + max_condensates_per_montage - 1) // max_condensates_per_montage
+            print(f"    ⚠️ Creating {n_montages} separate montages (too many condensates for single image)")
+        else:
+            n_montages = 1
+        
+        # Create montages
+        for montage_idx in range(n_montages):
+            start_idx = montage_idx * max_condensates_per_montage
+            end_idx = min(start_idx + max_condensates_per_montage, n_condensates)
+            montage_condensates = experiment_condensate_data[start_idx:end_idx]
+            
+            n_condensates_this_montage = len(montage_condensates)
+            
+            if n_montages > 1:
+                print(f"      Creating montage {montage_idx + 1}/{n_montages} with {n_condensates_this_montage} condensates")
+            
+            # Calculate montage layout for this subset
+            montage_rows = (n_condensates_this_montage + montage_cols - 1) // montage_cols
+            
+            # Create montage figure
+            fig_width = montage_cols * 4
+            fig_height = montage_rows * 4
+            
+            # Additional safety check
+            if fig_height * 300 > max_pixels:
+                # Further reduce if still too large
+                safe_height = (max_pixels // 300) - 1
+                fig_height = safe_height
+                print(f"      ⚠️ Reducing figure height to {fig_height} inches for safety")
+            
+            try:
+                fig, axes = plt.subplots(
+                    montage_rows, montage_cols, 
+                    figsize=(fig_width, fig_height)
+                )
+                
+                # Handle subplot configuration
+                if n_condensates_this_montage == 1:
+                    axes = [axes]
+                elif montage_rows == 1:
+                    axes = axes.reshape(1, -1)
+                elif montage_cols == 1:
+                    axes = axes.reshape(-1, 1)
+                
+                axes_flat = np.array(axes).flatten()
+                
+                # Plot each condensate in this montage
+                for plot_idx, condensate_info in enumerate(montage_condensates):
+                    ax = axes_flat[plot_idx]
+                    ax.set_facecolor('white')
+                    
+                    cx, cy = condensate_info['contour']
+                    tracks = condensate_info['interacting_tracks']
+                    condensate_idx = condensate_info['condensate_idx']
+                    
+                    # Calculate zoom window including all track points
+                    min_x, max_x = np.min(cx), np.max(cx)
+                    min_y, max_y = np.min(cy), np.max(cy)
+                    
+                    # Expand window to include track endpoints
+                    for track_data in tracks:
+                        min_x = min(min_x, track_data['x'].min())
+                        max_x = max(max_x, track_data['x'].max())
+                        min_y = min(min_y, track_data['y'].min())
+                        max_y = max(max_y, track_data['y'].max())
+                    
+                    zoom_xmin = int(min_x - zoom_margin)
+                    zoom_xmax = int(max_x + zoom_margin)
+                    zoom_ymin = int(min_y - zoom_margin)
+                    zoom_ymax = int(max_y + zoom_margin)
+                    
+                    # Plot condensate boundary
+                    ax.plot(cx, cy, lw=4, c="#2E86AB", alpha=0.9)
+                    ax.plot([cx[-1], cx[0]], [cy[-1], cy[0]], c="#2E86AB", lw=4, alpha=0.9)
+                    
+                    # Plot interacting tracks with different colors
+                    for track_idx, track_data in enumerate(tracks):
+                        color = track_colors[track_idx % len(track_colors)]
+                        
+                        ax.plot(
+                            track_data['x'], track_data['y'],
+                            color=color,
+                            alpha=0.8,
+                            linewidth=3,
+                            label=f'Track {int(track_data.iloc[0]["trackID"])}'
+                        )
+                        
+                        # Mark start and end points
+                        ax.plot(
+                            track_data.iloc[0]['x'], track_data.iloc[0]['y'],
+                            marker='o', markersize=6, color=color,
+                            markerfacecolor='white', markeredgewidth=2
+                        )
+                        ax.plot(
+                            track_data.iloc[-1]['x'], track_data.iloc[-1]['y'],
+                            marker='s', markersize=5, color=color,
+                            markerfacecolor=color, markeredgewidth=1, alpha=0.8
+                        )
+                    
+                    # # Add condensate label in center
+                    # center_x, center_y = np.mean(cx), np.mean(cy)
+                    # ax.text(
+                    #     center_x, center_y,
+                    #     f'C{condensate_idx + 1}',
+                    #     fontsize=12,
+                    #     color='white',
+                    #     fontweight='bold',
+                    #     ha='center', va='center',
+                    #     bbox=dict(boxstyle='circle,pad=0.3', facecolor="#2E86AB", alpha=0.8)
+                    # )
+                    
+                    # Add scale bar (1 μm for zoomed view)
+                    scalebar_length_pixels = 1.0 / um_per_pixel
+                    scale_x = zoom_xmax - scalebar_length_pixels - 5
+                    scale_y = zoom_ymax - 8
+                    
+                    ax.add_patch(Rectangle(
+                        (scale_x, scale_y), scalebar_length_pixels, 3,
+                        facecolor='black', edgecolor='white', linewidth=1
+                    ))
+                    
+                    # ax.text(
+                    #     scale_x + scalebar_length_pixels/2, scale_y - 5,
+                    #     '1 μm',
+                    #     ha='center', va='top', color='black', fontsize=9, fontweight='bold',
+                    #     bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.9)
+                    # )
+                    
+                    # Set zoom limits
+                    ax.set_xlim(zoom_xmin, zoom_xmax)
+                    ax.set_ylim(zoom_ymax, zoom_ymin)  # Invert Y for image coordinates
+                    ax.set_aspect('equal')
+                    ax.axis('off')
+                    
+                    # # Add title with condensate and interaction info
+                    # ax.set_title(
+                    #     f'Condensate {condensate_idx + 1}\n{len(tracks)} Interacting RNAs',
+                    #     fontsize=11,
+                    #     fontweight='bold',
+                    #     pad=10
+                    # )
+                    
+                    # Add legend if multiple tracks but not too many
+                    if 1 < len(tracks) <= 4:
+                        ax.legend(
+                            loc='upper left', 
+                            fontsize=8,
+                            frameon=True,
+                            framealpha=0.8,
+                            edgecolor='gray'
+                        )
+                
+                # Hide unused subplots
+                for idx in range(n_condensates_this_montage, len(axes_flat)):
+                    axes_flat[idx].axis('off')
+                
+                # Add overall title for this montage
+                if n_montages > 1:
+                    title_text = (f'Condensate Interactions: {experiment} (Part {montage_idx + 1}/{n_montages})\n'
+                                f'{n_condensates_this_montage} of {n_condensates} Total Condensates')
+                else:
+                    title_text = (f'Condensate Interactions: {experiment}\n'
+                                f'{n_condensates_this_montage} Condensates with RNA Interactions')
+                
+                fig.suptitle(
+                    title_text,
+                    fontsize=16,
+                    fontweight='bold',
+                    y=0.98
+                )
+                
+                plt.tight_layout()
+                # plt.subplots_adjust(top=0.90)
+                
+                # Save individual montage with clean filename
+                safe_filename = experiment.replace(" ", "_").replace("/", "_").replace("\\", "_")
+                
+                if n_montages > 1:
+                    output_path = join(folder_path, f"condensate_montage_{safe_filename}_part{montage_idx + 1:02d}.png")
+                else:
+                    output_path = join(folder_path, f"condensate_montage_{safe_filename}.png")
+                
+                plt.savefig(
+                    output_path,
+                    format="png",
+                    bbox_inches="tight",
+                    dpi=300,
+                    facecolor='white'
+                )
+                # plt.show()
+                plt.close()
+                
+                if n_montages > 1:
+                    print(f"      ✅ Saved: condensate_montage_{safe_filename}_part{montage_idx + 1:02d}.png")
+                else:
+                    print(f"    ✅ Saved: condensate_montage_{safe_filename}.png")
+                
+            except Exception as e:
+                print(f"      ❌ Error creating montage {montage_idx + 1}: {e}")
+                plt.close('all')  # Clean up any partial figures
+                continue
+    
+    print(f"🎉 All individual condensate montages created!")
+    
+    
+
+
+
+def plot_trajectory_snapshots(df_tracks,
+                              df_condensates,
+                              exp_results,
+                              trace_df,
+                              t_max: float = 3.0,
+                              title: str = "",
+                              save_path: str = "",
+                              um_per_pixel: float = 0.1,  # Conversion factor
+                              window_size_um: float = 5.0,  # Desired window size in micrometers
+                              scale_bar_um: float = 1.0, # Desired scale bar length in micrometers
+                              gradient_color: bool = False,
+                              show_interaction: bool = False,
+                              show_condensate_movements: bool = False,
+                              distance_by_interaction: bool = False,
+                              condensate_detection_threshold: float = 2.0
+                              ):
+    """
+    Creates a single, zoomed-in snapshot for one RNA track interacting with one condensate.
+
+    This function is designed to plot a single interaction event, assuming the input
+    DataFrames are pre-filtered for one specific track and one specific condensate.
+
+    Parameters:
+    - df_tracks (pd.DataFrame): DataFrame containing the track data.
+    - exp_results (dict): A dictionary with metadata for the event.
+    - save_path (str): The full file path to save the snapshot.
+    - um_per_pixel (float): Conversion factor from micrometers to pixels.
+    - window_size_um (float): The fixed size of the square zoom window in micrometers.
+    - scale_bar_um (float): The length of the scale bar in micrometers.
+    """
+    # Parameters for the figure layout
+    window_size_px = window_size_um / um_per_pixel  # Convert window size to pixels
+
+    exp, result = list(exp_results.items())[0]
+    num_col = 2
+    print(f"Length of exp_results: {num_col}")
+    experiment = list(exp_results.keys())[0]
+    final_frame = result['final_frame']
+    contour_boundaries = result['contour_boundaries']
+    interacting_tracks = result['interacting_tracks']
+
+    if not interacting_tracks:
+        print(f"❌ No interacting tracks found for {experiment}, skipping snapshot.")
+        return
+    
+    for track_id in interacting_tracks:
+        track_data = df_tracks[
+            (df_tracks['trackID'] == track_id) & 
+            (df_tracks['t'] <= final_frame)
+        ].sort_values('t')
+        
+        if len(track_data) < 2:
+            print(f"⚠️ Track {track_id} has insufficient data points, skipping.")
+            continue
+        
+        # Use detect_RNA_condensate_interactions to find the condensate
+        interaction_info = detect_RNA_condensate_interactions(track_data, 
+                                                              df_condensates[df_condensates['experiment'] == experiment],
+                                                              condensate_detection_threshold=condensate_detection_threshold)
+        
+        # Find the most frequent condensate ID the track interacts with
+        if 'nearest_condensate_id' in interaction_info.columns and not interaction_info['nearest_condensate_id'].isnull().all():
+            first_interacting_condensate_id = interaction_info[interaction_info['is_interacting'] == True]['nearest_condensate_id'].iloc[0]
+
+            shapely_contour_wkt = wkt.loads(interaction_info[interaction_info['nearest_condensate_id'] == first_interacting_condensate_id]['shapely_contour'].iloc[0])
+            cx, cy = shapely_contour_wkt.exterior.xy
+        else:
+            cx, cy = 0, 0
+            
+        # Calculate the center of the combined bounding box of the track and condensate
+        min_x_cond, max_x_cond = np.min(cx), np.max(cx)
+        min_y_cond, max_y_cond = np.min(cy), np.max(cy)
+        
+        min_x_track, max_x_track = track_data['x'].min(), track_data['x'].max()
+        min_y_track, max_y_track = track_data['y'].min(), track_data['y'].max()
+        
+        center_x = (min(min_x_cond, min_x_track) + max(max_x_cond, max_x_track)) / 2
+        center_y = (min(min_y_cond, min_y_track) + max(max_y_cond, max_y_track)) / 2
+        
+        # Set up a fixed-size zoom window in pixels
+        half_window_px = window_size_px / 2
+        zoom_xmin = int(center_x - half_window_px)
+        zoom_xmax = int(center_x + half_window_px)
+        zoom_ymin = int(center_y - half_window_px)
+        zoom_ymax = int(center_y + half_window_px)
+        
+        max_fps = 20
+        num_points = max_fps * 10  # 10 seconds at 20 fps
+        if gradient_color:
+            color_map = plt.get_cmap('viridis')
+            frame_colors = [color_map(i / (num_points - 1)) for i in range(num_points)]
+        else:
+            frame_colors = ["tab:blue" for _ in range(num_points)]
+            
+        # Create figure
+        fig, ax = plt.subplots(1, num_col, figsize=(num_col*4, 4))
+        
+        # Plot condensate boundary
+        if show_condensate_movements:
+            frame_list = interaction_info['frame'].values
+            contour_list = interaction_info['shapely_contour'].values
+            
+            for i in range(len(contour_list)):
+                try:
+                    shapely_poly = wkt.loads(contour_list[i])
+                    frame = int(frame_list[i])
+                    color = frame_colors[frame]
+                    patch = MplPolygon(list(shapely_poly.exterior.coords), closed=True, fill=True, edgecolor="#2E86AB", facecolor="#AED6F1", alpha=0.5, zorder=-1)
+                    ax[0].add_patch(patch)
+                except:
+                    continue
+        else:
+            patch = MplPolygon(np.column_stack((cx, cy)), closed=True, fill=True, edgecolor="#2E86AB", facecolor="#AED6F1", alpha=0.5, zorder=1)
+            ax[0].add_patch(patch)
+        
+        # ax[0].plot(cx, cy, lw=1, xc="#2E86AB", alpha=0.9)
+        # ax[0].plot([cx[-1], cx[0]], [cy[-1], cy[0]], c="#2E86AB", lw=1, alpha=0.9)
+        
+        # Plot interacting track
+        if distance_by_interaction and gradient_color:
+            x = interaction_info['x']
+            y = interaction_info['y']
+            
+            ax[0].plot(x.iloc[0], y.iloc[0], marker='o', markersize=6, color=color_map(0), markerfacecolor='white', markeredgewidth=2)
+            ax[0].plot(x.iloc[-1], y.iloc[-1], marker='s', markersize=5, color=color_map(1), markerfacecolor=color_map(1), markeredgewidth=1, alpha=0.8)
+            num_points = len(x)
+            
+            for i in range(num_points - 1):
+                ax[0].plot(x.iloc[i:i+2], y.iloc[i:i+2], lw=2, c=frame_colors[i], alpha=0.8)
+            
+        elif gradient_color and not distance_by_interaction:
+            num_points = len(track_data)
+            for i in range(num_points - 1):
+                frame = int(track_data['t'].iloc[i])
+                ax[0].plot(track_data['x'].iloc[i:i+2], track_data['y'].iloc[i:i+2], lw=2, c=frame_colors[frame], alpha=0.8)
+
+            ax[0].plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o', markersize=6, color=color_map(0), markerfacecolor='white', markeredgewidth=2)
+            ax[0].plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s', markersize=5, color=color_map(1), markerfacecolor=color_map(1), markeredgewidth=1, alpha=0.8)
+            
+        else:
+            ax[0].plot(track_data['x'], track_data['y'], lw=2, c="#F24236", alpha=0.8)
+            ax[0].plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o', markersize=6, color="#D35400", markerfacecolor='white', markeredgewidth=2)
+            ax[0].plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s', markersize=5, color="#D35400", markerfacecolor="#D35400", markeredgewidth=1, alpha=0.8)
+        
+        
+        if show_interaction:
+            distance_um = interaction_info['min_distance_to_condensate'] / um_per_pixel
+            angle = interaction_info['angle_to_contour']
+            x, y = track_data['x'], track_data['y']
+            for i in range(len(x)-1):
+                start_point = (x.iloc[i], y.iloc[i])
+                dx = distance_um.iloc[i] * np.cos((angle.iloc[i]))
+                dy = distance_um.iloc[i] * np.sin((angle.iloc[i]))
+                end_point = (start_point[0] + dx, start_point[1] + dy)
+                ax[0].arrow(start_point[0], start_point[1], end_point[0]-start_point[0], end_point[1]-start_point[1],
+                        head_width=0.1, head_length=0.1, fc=frame_colors[i], ec=frame_colors[i], alpha=0.1)
+        
+        num_points_track = len(track_data)
+        num_points_trace = len(trace_df)
+        if num_points_track != num_points_trace:
+            print(f"⚠️ Mismatch in number of points: track_data has {num_points_track}, trace_df has {num_points_trace}")
+        
+        # Plot the trajectory after first dwell
+        
+        if gradient_color is False:
+            first_dwell_time = trace_df['t_original'].iloc[0]
+            print(f"First dwell time: {first_dwell_time}, until {first_dwell_time + t_max}")
+            print(f"First time point int track_data: {track_data['t'].iloc[0]}")
+            post_dwell_data = track_data[(track_data['t'] >= first_dwell_time * 10) & (track_data['t'] < (first_dwell_time + t_max) * 10)] # Convert to frame number assuming 10 fps
+
+            ax[0].plot(post_dwell_data['x'], post_dwell_data['y'], lw=2, c='tab:green', alpha=0.8, zorder=12)
+            ax[0].plot(post_dwell_data.iloc[0]['x'], post_dwell_data.iloc[0]['y'], marker='o', markersize=6, color='tab:green', markerfacecolor='white', markeredgewidth=2, zorder=13)
+            ax[0].plot(post_dwell_data.iloc[-1]['x'], post_dwell_data.iloc[-1]['y'], marker='s', markersize=5, color='tab:green', markerfacecolor='tab:blue', markeredgewidth=1, alpha=0.8, zorder=13)
+
+        # Add scale bar
+        scale_bar_length_px = scale_bar_um / um_per_pixel
+        scale_bar_x_start = zoom_xmax - (0.5 * window_size_px)  # Position 5% from left
+        scale_bar_y = zoom_ymin + (0.05 * window_size_px)   # Position 5% from top
+        ax[0].plot([scale_bar_x_start, scale_bar_x_start + scale_bar_length_px], [scale_bar_y, scale_bar_y], lw=7, c="black")
+        # ax[0].text(scale_bar_x_start + scale_bar_length_px / 2, scale_bar_y - (0.075 * window_size_px), f"{scale_bar_um} μm", fontsize=12, ha='center', color='black')
+
+        # Set zoom limitss
+        # ax[0].set_xlim(zoom_xmin, zoom_xmax)
+        # ax[0].set_ylim(zoom_ymin, zoom_ymax)
+        ax[0].set_aspect('equal', adjustable='box')
+        ax[0].axis('off')
+        
+        
+        # Plot the trajectory distance
+        if gradient_color and not show_interaction:
+            color_map = plt.get_cmap('viridis')
+            num_points = len(trace_df)
+            for i in range(num_points - 1):
+                frame = int(trace_df['t'].iloc[i]*10)
+                ax[1].plot(trace_df['t'].iloc[i:i+2], trace_df['distance_um'].iloc[i:i+2], lw=2, c=frame_colors[frame], alpha=0.8)
+
+        elif show_interaction:
+            y = interaction_info['min_distance_to_condensate']
+            x = interaction_info['frame'] / 10.0  # Convert to seconds assuming 10 fps
+            for i in range(len(x)-1):
+                ax[1].plot(x.iloc[i:i+2], y.iloc[i:i+2], lw=2, c=frame_colors[i], alpha=0.8)    
+            
+            ax2 = ax[1].twinx()
+            num_points = len(trace_df)
+            for i in range(num_points - 1):
+                ax2.plot(trace_df['t'].iloc[i:i+2], trace_df['distance_um'].iloc[i:i+2], lw=2, c='tab:red', alpha=0.5)            
+            
+        else:
+            ax[1].plot(trace_df['t'], trace_df['distance_um'], lw=2, c='grey', alpha=0.8)
+        
+        ax[1].set_xlabel("Time (s)", fontsize=12)
+        ax[1].set_ylabel("Distance (μm)", fontsize=12)
+        
+        ax[1].tick_params(axis='both', which='major', labelsize=10)
+        ax[1].axhline(y=0, color='gray', linestyle='--', lw=1)
+        ax[1].set_xlim(0, trace_df['t'].max())
+        
+        if show_interaction:
+            ylims = ax2.get_ylim()
+            ax[1].set_ylim(ylims)
+            ax2.tick_params(axis='y', labelcolor='tab:red', labelsize=10)
+            ax2.set_ylabel("Distance (μm) by bulk analysis", color='tab:red', fontsize=12)
+
+        if title is not None:
+            fig.suptitle(title, fontsize=16)
+
+        plt.tight_layout()
+        if save_path is not None:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight', transparent=True)
+        plt.show()
+    
+    
+    
+    
+import matplotlib.animation as animation
+from IPython.display import HTML, display
+    
+def create_trajectory_movies(df_tracks,
+                             df_condensates,
+                             exp_results,
+                             trace_df,
+                             t_max: float = 3.0,
+                             title: str = "",
+                             save_path: str = "",
+                             um_per_pixel: float = 0.1,  # Conversion factor
+                             window_size_um: float = 5.0,  # Desired window size in micrometers
+                             scale_bar_um: float = 1.0, # Desired scale bar length in micrometers
+                             gradient_color: bool = False,
+                             show_interaction: bool = False,
+                             show_condensate_movements: bool = False,
+                            #  distance_by_interaction: bool = False,
+                             lock_by_condensate_distance: bool = False,
+                             condensate_detection_threshold: float = 2.0,
+                             fps: int = 10,  # Frames per second for the movie
+                             last_n_frames: int = 5 # <-- NEW/MODIFIED PARAMETER
+                             ):
+    """
+    Creates an animated movie for RNA tracks interacting with a condensate.
+
+    Parameters:
+    - ... (all your original parameters) ...
+    - fps (int): Frames per second for the output movie.
+    - last_n_frames (int, optional): The number of frames *before* the current one 
+      to display as a trailing window (e.g., 5 means a 6-frame tail). 
+      If None, plots the full trajectory.
+    
+    Returns:
+    - IPython.display.HTML object for displaying the movie in a notebook.
+    """
+    
+    # --- 1. Initial Data Setup (mostly from your original code) ---
+    window_size_px = window_size_um / um_per_pixel
+    exp, result = list(exp_results.items())[0]
+    num_col = 2
+    experiment = list(exp_results.keys())[0]
+    final_time = result['final_frame'] # Assuming this is 't' in seconds
+    interacting_tracks = result['interacting_tracks']
+
+    if not interacting_tracks:
+        print(f"❌ No interacting tracks found for {experiment}, skipping movie.")
+        return
+
+    # Process the first interacting track for this example
+    track_id = list(interacting_tracks)[0] # Use list() for sets
+    
+    # Get all track data up to the final time
+    track_data_total = df_tracks[
+        (df_tracks['trackID'] == track_id) & 
+        (df_tracks['t'] <= final_time)
+    ].sort_values('t')
+
+    if len(track_data_total) < 2:
+        print(f"⚠️ Track {track_id} has insufficient data points, skipping.")
+        return
+
+    # Get interaction info for the whole track
+    interaction_info = detect_RNA_condensate_interactions(
+        track_data_total, 
+        df_condensates[df_condensates['experiment'] == experiment],
+        condensate_detection_threshold=condensate_detection_threshold,
+        lock_by_condensate_distance=lock_by_condensate_distance
+    )
+    
+    # Get all frames to be animated
+    # We assume 'frame' column exists and is integer
+    if 'frame' not in interaction_info.columns:
+         # Assuming 't' is in seconds and we want 'fps' frames per second
+        interaction_info['frame'] = (interaction_info['t'] * fps).round().astype(int)
+        
+    # Get all unique frames to iterate over
+    frames_to_animate = np.sort(interaction_info['frame'].unique())
+    # *** REMOVED THE SLICE HERE - We want to animate all frames ***
+
+    if len(frames_to_animate) < 2:
+        print(f"⚠️ Not enough frames to animate for track {track_id}, skipping.")
+        return
+        
+    # Find the main condensate to focus on
+    if 'nearest_condensate_id' in interaction_info.columns and not interaction_info['nearest_condensate_id'].isnull().all():
+        interacting_frames = interaction_info[interaction_info['is_interacting'] == True]
+        if not interacting_frames.empty:
+            try:
+                first_interacting_condensate_id = interacting_frames['nearest_condensate_id'].iloc[0]
+                first_contour_wkt = interaction_info[
+                    interaction_info['nearest_condensate_id'] == first_interacting_condensate_id
+                ]['shapely_contour'].iloc[0]
+                
+                shapely_contour_wkt = wkt.loads(first_contour_wkt)
+                cx, cy = shapely_contour_wkt.exterior.xy
+            except:
+                # Check the next interacting condensate if the first fails
+                next_interacting_frames = interaction_info[interaction_info['is_interacting'] == True].iloc[1:]
+                if not next_interacting_frames.empty:
+                    try:
+                        next_condensate_id = next_interacting_frames['nearest_condensate_id'].iloc[0]
+                        next_contour_wkt = interaction_info[
+                            interaction_info['nearest_condensate_id'] == next_condensate_id
+                        ]['shapely_contour'].iloc[0]
+                        
+                        shapely_contour_wkt = wkt.loads(next_contour_wkt)
+                        cx, cy = shapely_contour_wkt.exterior.xy
+                    except:
+                        cx, cy = [0], [0] # Default if no interaction found
+                else:
+                    cx, cy = [0], [0] # Default if no interaction found
+                
+            # Create the static patch (for 'show_condensate_movements=False')
+            static_condensate_patch = MplPolygon(
+                np.column_stack((cx, cy)), 
+                closed=True, fill=True, edgecolor="#2E86AB", 
+                facecolor="#AED6F1", alpha=0.5, zorder=1
+            )
+        else:
+            cx, cy = [0], [0] # Default if no interaction found
+            static_condensate_patch = MplPolygon(
+                np.column_stack((cx, cy)), closed=True, fill=False, alpha=0.0
+            )
+    else:
+        cx, cy = [0], [0]
+        static_condensate_patch = MplPolygon(
+            np.column_stack((cx, cy)), closed=True, fill=False, alpha=0.0
+        )
+
+    # --- 2. Setup Static Figure Elements ---
+    
+    # Calculate zoom window based on the *entire* track and first condensate
+    min_x_cond, max_x_cond = np.min(cx), np.max(cx)
+    min_y_cond, max_y_cond = np.min(cy), np.max(cy)
+    min_x_track, max_x_track = track_data_total['x'].min(), track_data_total['x'].max()
+    min_y_track, max_y_track = track_data_total['y'].min(), track_data_total['y'].max()
+    
+    center_x = (min(min_x_cond, min_x_track) + max(max_x_cond, max_x_track)) / 2
+    center_y = (min(min_y_cond, min_y_track) + max(max_y_cond, max_y_track)) / 2
+    
+    half_window_px = window_size_px / 2
+    zoom_xmin = int(center_x - half_window_px)
+    zoom_xmax = int(center_x + half_window_px)
+    zoom_ymin = int(center_y - half_window_px)
+    zoom_ymax = int(center_y + half_window_px)
+    
+    # Get the y_limits for consistent axis scaling
+    y = interaction_info['min_distance_to_condensate']
+    y_min_limit = y.min() - (0.1)
+    y_max_limit = y.max() + (0.1)
+    
+    # Setup color map for gradients
+    color_map = plt.get_cmap('viridis')
+    if gradient_color:
+        # Create a dictionary mapping frame number to a color
+        frame_colors_dict = {
+            frame: color_map(i / (len(frames_to_animate) - 1)) 
+            for i, frame in enumerate(frames_to_animate)
+        }
+    else:
+        frame_colors_dict = {
+            frame: "tab:blue" 
+            for frame in frames_to_animate
+        }
+
+    # Setup scale bar properties
+    scale_bar_length_px = scale_bar_um / um_per_pixel
+    # Repositioned to bottom-left for clarity
+    scale_bar_x_start = zoom_xmin + (0.05 * window_size_px)
+    scale_bar_y = zoom_ymin + (0.05 * window_size_px)
+
+    # Setup figure
+    fig, ax = plt.subplots(1, num_col, figsize=(num_col * 5, 5)) # Slightly larger for movie
+    
+    # Get total time for x-axis limit
+    total_max_t = trace_df['t'].max()
+    
+    # --- 3. Define the Animation Function ---
+    def animate(current_frame):
+        # Clear previous frame's drawings
+        ax[0].clear()
+        ax[1].clear()
+        
+        # === *** NEW LOGIC FOR DATA SLICING *** ===
+        
+        # First, get all data *up to* the current frame to find the current time
+        data_up_to_now = interaction_info[interaction_info['frame'] <= current_frame]
+        
+        if data_up_to_now.empty:
+            # Handle case where current_frame is before the first frame
+            current_t = 0
+            data_now = data_up_to_now # Empty dataframe
+        else:
+            # Get the time for the current frame
+            current_t = data_up_to_now['t'].max()
+        
+            # Now, create the 'data_now' slice for the trailing window
+            if last_n_frames is not None:
+                # e.g., if current_frame=10 and last_n_frames=5,
+                # we want start_frame = 5 (frames 5,6,7,8,9,10)
+                start_frame = max(0, current_frame - last_n_frames) 
+                data_now = data_up_to_now[
+                    (data_up_to_now['frame'] >= start_frame)
+                ] # We already know it's <= current_frame
+            else:
+                # Original behavior: plot everything up to now
+                data_now = data_up_to_now
+        
+        # Filter the trace_df using the correct current_t
+        trace_df_now = trace_df[trace_df['t'] <= current_t]
+
+        # === Plot 1: Trajectory (ax[0]) ===
+        
+        # Plot condensate boundary
+        if show_condensate_movements:
+            # Get the contour for the *current* frame
+            current_frame_data = interaction_info[interaction_info['frame'] == current_frame]
+            if not current_frame_data.empty:
+                try:
+                    contour_wkt = current_frame_data['shapely_contour'].iloc[0]
+                    shapely_poly = wkt.loads(contour_wkt)
+                    patch = MplPolygon(
+                        list(shapely_poly.exterior.coords), 
+                        closed=True, fill=True, edgecolor="#2E86AB", 
+                        facecolor="#AED6F1", alpha=0.5, zorder=-1
+                    )
+                    ax[0].add_patch(patch)
+                except Exception as e:
+                    # Fallback to static patch if dynamic one fails
+                    ax[0].add_patch(static_condensate_patch)
+            else:
+                 ax[0].add_patch(static_condensate_patch)
+        else:
+            # Add the pre-calculated static patch
+            ax[0].add_patch(static_condensate_patch)
+
+        # Plot interacting track (using the sliced 'data_now')
+        x = data_now['x']
+        y = data_now['y']
+        
+        if len(x) > 0:
+            if gradient_color:
+                # Plot start marker (of the tail)
+                start_frame = data_now['frame'].iloc[0]
+                ax[0].plot(x.iloc[0], y.iloc[0], marker='o', markersize=6, 
+                           color=frame_colors_dict.get(start_frame, 'gray'), 
+                           markerfacecolor='white', markeredgewidth=2)
+                
+                # Plot segments
+                for i in range(len(x) - 1):
+                    segment_frame = data_now['frame'].iloc[i]
+                    color = frame_colors_dict.get(segment_frame, 'gray')
+                    ax[0].plot(x.iloc[i:i+2], y.iloc[i:i+2], lw=2, c=color, alpha=0.8)
+                
+                # Plot current position marker
+                end_frame = data_now['frame'].iloc[-1]
+                end_color = frame_colors_dict.get(end_frame, 'gray')
+                ax[0].plot(x.iloc[-1], y.iloc[-1], marker='s', markersize=5, 
+                           color=end_color, markerfacecolor=end_color, 
+                           markeredgewidth=1, alpha=0.8)
+            
+            else: # Not gradient_color
+                color = "tab:blue"
+                ax[0].plot(x, y, lw=2, c=color, alpha=0.8)
+                ax[0].plot(x.iloc[0], y.iloc[0], marker='o', markersize=6, 
+                           color=color, markerfacecolor='white', markeredgewidth=2)
+                ax[0].plot(x.iloc[-1], y.iloc[-1], marker='s', markersize=5, 
+                           color=color, markerfacecolor=color, markeredgewidth=1, alpha=0.8)
+
+        # Plot interaction arrows
+        if show_interaction and len(data_now) > 0:
+            distance_px = data_now['min_distance_to_condensate'] / um_per_pixel
+            angle = data_now['angle_to_contour']
+            
+            # This plots all arrows just for the tail
+            for i in range(len(x)):
+                start_point = (x.iloc[i], y.iloc[i])
+                dx = distance_px.iloc[i] * np.cos(angle.iloc[i])
+                dy = distance_px.iloc[i] * np.sin(angle.iloc[i])
+                
+                # Check for valid dx, dy (can be nan if no contour)
+                if not (np.isnan(dx) or np.isnan(dy)):
+                    end_point = (start_point[0] + dx, start_point[1] + dy)
+                    frame_color = frame_colors_dict.get(data_now['frame'].iloc[i], 'gray')
+                    ax[0].arrow(start_point[0], start_point[1], end_point[0]-start_point[0], end_point[1]-start_point[1],
+                                head_width=0.1, head_length=0.1, fc=frame_color, ec=frame_color, alpha=0.75)
+        
+        
+        # Add scale bar (must be redrawn every frame)
+        ax[0].plot([scale_bar_x_start, scale_bar_x_start + scale_bar_length_px], 
+                   [scale_bar_y, scale_bar_y], lw=5, c="black")
+        ax[0].text(scale_bar_x_start, scale_bar_y + 1, f'{scale_bar_um} µm', 
+                   color='black', ha='left', va='bottom', fontsize=10)
+
+        # Set zoom limits and aspect
+        ax[0].set_xlim(zoom_xmin, zoom_xmax)
+        ax[0].set_ylim(zoom_ymin, zoom_ymax)
+        ax[0].set_aspect('equal', adjustable='box')
+        ax[0].axis('off')
+        
+        # === Plot 2: Distance (ax[1]) ===
+        
+        if gradient_color and not show_interaction:
+            # This plots the *full* bulk trace up to current time
+            x_trace = trace_df_now['t']
+            y_trace = trace_df_now['distance_um']
+            for i in range(len(x_trace) - 1):
+                # Match time to the closest frame
+                frame = (x_trace.iloc[i] * fps).round().astype(int)
+                color = frame_colors_dict.get(frame, 'gray')
+                ax[1].plot(x_trace.iloc[i:i+2], y_trace.iloc[i:i+2], lw=2, c=color, alpha=0.8)
+
+        elif show_interaction:
+            # This plots the *trailing window* interaction distance
+            y = data_up_to_now['min_distance_to_condensate'] 
+            x = data_up_to_now['t'] / fps
+            for i in range(len(x)-1):
+                frame = data_up_to_now['frame'].iloc[i]
+                color = frame_colors_dict.get(frame, 'gray')
+                ax[1].plot(x.iloc[i:i+2], y.iloc[i:i+2], lw=2, c=color, alpha=0.8)    
+                
+        # Formatting for ax[1]
+        ax[1].set_xlabel("Time (s)", fontsize=12)
+        ax[1].set_ylabel("Interaction Distance (μm)", fontsize=12)
+        ax[1].tick_params(axis='both', which='major', labelsize=10)
+        ax[1].axhline(y=0, color='gray', linestyle='--', lw=1)
+        ax[1].set_xlim(0, total_max_t) # Use total max time for stable axis
+        ax[1].set_ylim(y_min_limit, y_max_limit)
+
+        # Add a title that updates with the frame
+        fig.suptitle(f"{title}\nTrack {track_id} | Time {current_t/fps:.2f} s (Frame {int(current_frame)})", fontsize=16)
+        
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust for suptitle
+
+        return ax,
+
+    # --- 4. Create and Save the Animation ---
+    
+    # Create the animation object
+    print("Creating animation...")
+    ani = animation.FuncAnimation(
+        fig,
+        animate,
+        frames=frames_to_animate,  # Pass the list of frames to iterate over
+        interval=1000/fps,        # Interval in milliseconds
+        blit=False                 # blit=False is simpler and more robust
+    )
+
+    # Save the animation
+    if save_path:
+        # Ensure save_path has a movie extension
+        if not save_path.endswith(('.mp4', '.gif')):
+            if save_path.endswith('.png'):
+                save_path = save_path.split('.png')[0]
+            save_path += '.mp4'
+            
+        print(f"Saving movie to {save_path}... (This may take a while)")
+        # print("INFO: This requires 'ffmpeg' to be installed on your system.")
+        try:
+            # Use the ffmpeg writer
+            writer = animation.writers['ffmpeg'](fps=fps)
+            ani.save(save_path, writer=writer, dpi=150)
+            print(f"✅ Successfully saved movie to {save_path}")
+        except FileNotFoundError:
+            print("❌ ERROR: 'ffmpeg' not found.")
+            print("Please install ffmpeg to save animations as .mp4 files.")
+            print("Try: 'conda install -c conda-forge ffmpeg' or 'sudo apt-get install ffmpeg'")
+        except Exception as e:
+            print(f"❌ An error occurred during saving: {e}")
+
+    # Close the static plot figure
+    plt.close(fig)
+
+    # Return the animation to be displayed in the notebook
+    return HTML(ani.to_jshtml())
