@@ -61,7 +61,6 @@ print(f"Embeddings shape: {embeddings.shape}")
 # Define Parameter Grid
 n_neighbors_list = np.arange(5, 100, 5)
 min_dist_list = np.arange(0.0, 1.0, 0.1)
-random_state_list = np.arange(0, 100, 10)
 
 results = []
 best_score = 0
@@ -69,11 +68,10 @@ best_score = 0
 print("Running Grid Search...\n")
 for n in n_neighbors_list:
     for d in min_dist_list:
-        for r in random_state_list:
-            print(f"Testing n_neighbors={n}, min_dist={d:.1f}, random_state={r} ...\n", end="", flush=True)
+            print(f"Testing n_neighbors={n}, min_dist={d:.1f} ...\n", end="", flush=True)
             
             # Run UMAP with fixed random state for reproducibility
-            reducer = umap.UMAP(n_neighbors=n, min_dist=d, n_components=2, random_state=r)
+            reducer = umap.UMAP(n_neighbors=n, min_dist=d, n_components=2, random_state=42)
             embedding_2d = reducer.fit_transform(embeddings)
         
             # Calculate Trustworthiness Score (higher is better, max 1.0)
@@ -83,25 +81,24 @@ for n in n_neighbors_list:
             results.append({
                 'n_neighbors': n,
                 'min_dist': d,
-                'random_state': r,
                 'trustworthiness': score
             })
             
             # Plot the embedding
             plt.figure(figsize=(8, 8))
             plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], s=1, alpha=0.5)
-            plt.title(f"UMAP (n={n}, dist={d}, r={r})\nTrustworthiness: {score:.4f}")
+            plt.title(f"UMAP (n={n}, dist={d})\nTrustworthiness: {score:.4f}")
             plt.axis('off')
-            plt.savefig(f"./results/UMAP/tests/combinations/umap_n{n}_d{d:.1f}_r{r}.png")
+            plt.savefig(f"./results/UMAP/tests/combinations/{'_'.join(file_list) if len(file_list) > 1 else file_list[0]}_umap_n{n}_d{d:.1f}.png")
             plt.close()
 
 
             # Check if the score is better than the best score
             if score > best_score:
                 best_score = score
-                print(f"New best score: {best_score:.4f} (n_neighbors={n}, min_dist={d:.1f}, random_state={r})\n")
+                print(f"New best score: {best_score:.4f} (n_neighbors={n}, min_dist={d:.1f})\n")
             else:
-                print(f"Score: {score:.4f} (n_neighbors={n}, min_dist={d:.1f}, random_state={r})\n")
+                print(f"Score: {score:.4f} (n_neighbors={n}, min_dist={d:.1f})\n")
             
 
 # Convert to DataFrame and Sort
@@ -118,12 +115,11 @@ df_results.to_csv("umap_tuning_results.csv", index=False)
 best_params = df_results.iloc[0]
 best_n = int(best_params['n_neighbors'])
 best_d = best_params['min_dist']
-best_r = int(best_params['random_state'])
 
-print(f"\nBest Parameters: n_neighbors={best_n}, min_dist={best_d}, random_state={best_r}")
+print(f"\nBest Parameters: n_neighbors={best_n}, min_dist={best_d}")
 print("Generating plot for best parameters...")
 
-reducer = umap.UMAP(n_neighbors=best_n, min_dist=best_d, n_components=2, random_state=best_r)
+reducer = umap.UMAP(n_neighbors=best_n, min_dist=best_d, n_components=2, random_state=42)
 embedding_best = reducer.fit_transform(embeddings)
 
 plt.figure(figsize=(8, 8))

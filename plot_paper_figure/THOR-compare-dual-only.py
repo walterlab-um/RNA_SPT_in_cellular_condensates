@@ -10,7 +10,7 @@ sns.set(color_codes=True, style="white")
 
 #––– Load Data –––
 # folder = "/Users/esumrall/Desktop/RNA-in-HOPS_condensates/THOR_and_THORdel_1x_2x"
-folder = "/Volumes/lsa-nwalter/Sam_Husna_turbo/HOPS-RNA-project/paper_figure_plots/Effect_RBP_binding_THOR"
+folder = "/Volumes/lsa-nwalter/Data/Sam_Husna_turbo/HOPS-RNA-project/paper_figure_plots/Effect_RBP_binding_THOR"
 
 os.chdir(folder)
 
