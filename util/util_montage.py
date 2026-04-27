@@ -840,6 +840,7 @@ def plot_trajectory_snapshots(df_tracks,
         
         max_fps = 20
         num_points = max_fps * 10  # 10 seconds at 20 fps
+        
         if gradient_color:
             color_map = plt.get_cmap('viridis')
             frame_colors = [color_map(i / (num_points - 1)) for i in range(num_points)]
@@ -849,7 +850,7 @@ def plot_trajectory_snapshots(df_tracks,
         # Create figure
         fig, ax = plt.subplots(1, num_col, figsize=(num_col*4, 4))
         
-        # Plot condensate boundary
+        # Plot the movement of condensate boundaries
         if show_condensate_movements:
             frame_list = interaction_info['frame'].values
             contour_list = interaction_info['shapely_contour'].values
@@ -858,7 +859,7 @@ def plot_trajectory_snapshots(df_tracks,
                 try:
                     shapely_poly = wkt.loads(contour_list[i])
                     frame = int(frame_list[i])
-                    color = frame_colors[frame]
+                    # color = frame_colors[frame]
                     patch = MplPolygon(list(shapely_poly.exterior.coords), closed=True, fill=True, edgecolor="#2E86AB", facecolor="#AED6F1", alpha=0.5, zorder=-1)
                     ax[0].add_patch(patch)
                 except:
@@ -870,7 +871,8 @@ def plot_trajectory_snapshots(df_tracks,
         # ax[0].plot(cx, cy, lw=1, xc="#2E86AB", alpha=0.9)
         # ax[0].plot([cx[-1], cx[0]], [cy[-1], cy[0]], c="#2E86AB", lw=1, alpha=0.9)
         
-        # Plot interacting track
+        
+        # Plot interacting track and apply a gradient color if enabled
         if distance_by_interaction and gradient_color:
             x = interaction_info['x']
             y = interaction_info['y']
@@ -881,7 +883,9 @@ def plot_trajectory_snapshots(df_tracks,
             
             for i in range(num_points - 1):
                 ax[0].plot(x.iloc[i:i+2], y.iloc[i:i+2], lw=2, c=frame_colors[i], alpha=0.8)
-            
+        
+        
+        # Plot with gradient color based on frame number if enabled and not using distance-based coloring            
         elif gradient_color and not distance_by_interaction:
             num_points = len(track_data)
             for i in range(num_points - 1):
@@ -891,6 +895,8 @@ def plot_trajectory_snapshots(df_tracks,
             ax[0].plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o', markersize=6, color=color_map(0), markerfacecolor='white', markeredgewidth=2)
             ax[0].plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s', markersize=5, color=color_map(1), markerfacecolor=color_map(1), markeredgewidth=1, alpha=0.8)
             
+        
+        # Plot without gradient color if not enabled
         else:
             ax[0].plot(track_data['x'], track_data['y'], lw=2, c="#F24236", alpha=0.8)
             ax[0].plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o', markersize=6, color="#D35400", markerfacecolor='white', markeredgewidth=2)
@@ -984,6 +990,237 @@ def plot_trajectory_snapshots(df_tracks,
         plt.show()
     
     
+
+
+def plot_a_trajectory(track_df,
+                    df_condensates,
+                    exp_results,
+                    trace_df,
+                    t_max: float = 3.0,
+                    title: str = "",
+                    save_path: str = "",
+                    um_per_pixel: float = 0.1,  # Conversion factor
+                    window_size_um: float = 5.0,  # Desired window size in micrometers
+                    scale_bar_um: float = 1.0, # Desired scale bar length in micrometers
+                    gradient_color: bool = False,
+                    show_interaction: bool = False,
+                    show_condensate_movements: bool = False,
+                    distance_by_interaction: bool = False,
+                    condensate_detection_threshold: float = 2.0
+                    ):
+    """
+    Creates a single, zoomed-in snapshot for one RNA track interacting with one condensate.
+
+    This function is designed to plot a single interaction event, assuming the input
+    DataFrames are pre-filtered for one specific track and one specific condensate.
+
+    Parameters:
+    - df_tracks (pd.DataFrame): DataFrame containing the track data.
+    - exp_results (dict): A dictionary with metadata for the event.
+    - save_path (str): The full file path to save the snapshot.
+    - um_per_pixel (float): Conversion factor from micrometers to pixels.
+    - window_size_um (float): The fixed size of the square zoom window in micrometers.
+    - scale_bar_um (float): The length of the scale bar in micrometers.
+    """
+    # Parameters for the figure layout
+    window_size_px = window_size_um / um_per_pixel  # Convert window size to pixels
+    half_window_px = window_size_px / 2
+    
+    max_fps = 20
+    num_points = max_fps * 10  # 10 seconds at 20 fps
+    
+    exp, result = list(exp_results.items())[0]
+    num_col = 2
+    print(f"Length of exp_results: {num_col}")
+    experiment = list(exp_results.keys())[0]
+    final_frame = result['final_frame']
+    contour_boundaries = result['contour_boundaries']
+    interacting_tracks = result['interacting_tracks']
+
+    if not interacting_tracks:
+        print(f"❌ No interacting tracks found for {experiment}, skipping snapshot.")
+        return
+    
+    
+    # Obtain the track data, cut the final_frame
+    track_data = track_df[(track_df['t'] <= final_frame)].sort_values('t')
+    
+    
+    # Use detect_RNA_condensate_interactions to find the condensate
+    interaction_info = detect_RNA_condensate_interactions(track_data, 
+                                                            df_condensates[df_condensates['experiment'] == experiment],
+                                                            condensate_detection_threshold=condensate_detection_threshold)
+    
+    # Find the most frequent condensate ID the track interacts with
+    if 'nearest_condensate_id' in interaction_info.columns and not interaction_info['nearest_condensate_id'].isnull().all():
+        first_interacting_condensate_id = interaction_info[interaction_info['is_interacting'] == True]['nearest_condensate_id'].iloc[0]
+
+        shapely_contour_wkt = wkt.loads(interaction_info[interaction_info['nearest_condensate_id'] == first_interacting_condensate_id]['shapely_contour'].iloc[0])
+        cx, cy = shapely_contour_wkt.exterior.xy
+    else:
+        cx, cy = 0, 0
+        
+    # Calculate the center of the combined bounding box of the track and condensate
+    min_x_cond, max_x_cond = np.min(cx), np.max(cx)
+    min_y_cond, max_y_cond = np.min(cy), np.max(cy)
+    
+    min_x_track, max_x_track = track_data['x'].min(), track_data['x'].max()
+    min_y_track, max_y_track = track_data['y'].min(), track_data['y'].max()
+    
+    center_x = (min(min_x_cond, min_x_track) + max(max_x_cond, max_x_track)) / 2
+    center_y = (min(min_y_cond, min_y_track) + max(max_y_cond, max_y_track)) / 2
+    
+    # Set up a fixed-size zoom window in pixels
+    zoom_xmin = int(center_x - half_window_px)
+    zoom_xmax = int(center_x + half_window_px)
+    zoom_ymin = int(center_y - half_window_px)
+    zoom_ymax = int(center_y + half_window_px)
+    
+    if gradient_color:
+        color_map = plt.get_cmap('viridis')
+        frame_colors = [color_map(i / (num_points - 1)) for i in range(num_points)]
+    else:
+        frame_colors = ["tab:blue" for _ in range(num_points)]
+        
+    # Create figure
+    fig, ax = plt.subplots(1, num_col, figsize=(num_col*4, 4))
+    
+    # Plot the movement of condensate boundaries
+    if show_condensate_movements:
+        frame_list = interaction_info['frame'].values
+        contour_list = interaction_info['shapely_contour'].values
+        
+        for i in range(len(contour_list)):
+            try:
+                shapely_poly = wkt.loads(contour_list[i])
+                frame = int(frame_list[i])
+                # color = frame_colors[frame]
+                patch = MplPolygon(list(shapely_poly.exterior.coords), closed=True, fill=True, edgecolor="#2E86AB", facecolor="#AED6F1", alpha=0.5, zorder=-1)
+                ax[0].add_patch(patch)
+            except:
+                continue
+    else:
+        patch = MplPolygon(np.column_stack((cx, cy)), closed=True, fill=True, edgecolor="#2E86AB", facecolor="#AED6F1", alpha=0.5, zorder=1)
+        ax[0].add_patch(patch)
+    
+    
+    
+    # Plot interacting track and apply a gradient color if enabled
+    if distance_by_interaction and gradient_color:
+        x = interaction_info['x']
+        y = interaction_info['y']
+        
+        ax[0].plot(x.iloc[0], y.iloc[0], marker='o', markersize=6, color=color_map(0), markerfacecolor='white', markeredgewidth=2)
+        ax[0].plot(x.iloc[-1], y.iloc[-1], marker='s', markersize=5, color=color_map(1), markerfacecolor=color_map(1), markeredgewidth=1, alpha=0.8)
+        num_points = len(x)
+        
+        for i in range(num_points - 1):
+            ax[0].plot(x.iloc[i:i+2], y.iloc[i:i+2], lw=2, c=frame_colors[i], alpha=0.8)
+    
+    
+    # Plot with gradient color based on frame number if enabled and not using distance-based coloring            
+    elif gradient_color and not distance_by_interaction:
+        num_points = len(track_data)
+        for i in range(num_points - 1):
+            frame = int(track_data['t'].iloc[i])
+            ax[0].plot(track_data['x'].iloc[i:i+2], track_data['y'].iloc[i:i+2], lw=2, c=frame_colors[frame], alpha=0.8)
+
+        ax[0].plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o', markersize=6, color=color_map(0), markerfacecolor='white', markeredgewidth=2)
+        ax[0].plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s', markersize=5, color=color_map(1), markerfacecolor=color_map(1), markeredgewidth=1, alpha=0.8)
+        
+    
+    # Plot without gradient color if not enabled
+    else:
+        ax[0].plot(track_data['x'], track_data['y'], lw=2, c="#F24236", alpha=0.8)
+        ax[0].plot(track_data.iloc[0]['x'], track_data.iloc[0]['y'], marker='o', markersize=6, color="#D35400", markerfacecolor='white', markeredgewidth=2)
+        ax[0].plot(track_data.iloc[-1]['x'], track_data.iloc[-1]['y'], marker='s', markersize=5, color="#D35400", markerfacecolor="#D35400", markeredgewidth=1, alpha=0.8)
+    
+    
+    if show_interaction:
+        distance_um = interaction_info['min_distance_to_condensate'] / um_per_pixel
+        angle = interaction_info['angle_to_contour']
+        x, y = track_data['x'], track_data['y']
+        for i in range(len(x)-1):
+            start_point = (x.iloc[i], y.iloc[i])
+            dx = distance_um.iloc[i] * np.cos((angle.iloc[i]))
+            dy = distance_um.iloc[i] * np.sin((angle.iloc[i]))
+            end_point = (start_point[0] + dx, start_point[1] + dy)
+            ax[0].arrow(start_point[0], start_point[1], end_point[0]-start_point[0], end_point[1]-start_point[1],
+                    head_width=0.1, head_length=0.1, fc=frame_colors[i], ec=frame_colors[i], alpha=0.1)
+    
+    num_points_track = len(track_data)
+    num_points_trace = len(trace_df)
+    if num_points_track != num_points_trace:
+        print(f"⚠️ Mismatch in number of points: track_data has {num_points_track}, trace_df has {num_points_trace}")
+    
+    # Plot the trajectory after first dwell
+    
+    if gradient_color is False:
+        first_dwell_time = trace_df['t_original'].iloc[0]
+        print(f"First dwell time: {first_dwell_time}, until {first_dwell_time + t_max}")
+        print(f"First time point int track_data: {track_data['t'].iloc[0]}")
+        post_dwell_data = track_data[(track_data['t'] >= first_dwell_time * 10) & (track_data['t'] < (first_dwell_time + t_max) * 10)] # Convert to frame number assuming 10 fps
+
+        ax[0].plot(post_dwell_data['x'], post_dwell_data['y'], lw=2, c='tab:green', alpha=0.8, zorder=12)
+        ax[0].plot(post_dwell_data.iloc[0]['x'], post_dwell_data.iloc[0]['y'], marker='o', markersize=6, color='tab:green', markerfacecolor='white', markeredgewidth=2, zorder=13)
+        ax[0].plot(post_dwell_data.iloc[-1]['x'], post_dwell_data.iloc[-1]['y'], marker='s', markersize=5, color='tab:green', markerfacecolor='tab:blue', markeredgewidth=1, alpha=0.8, zorder=13)
+
+    # Add scale bar
+    scale_bar_length_px = scale_bar_um / um_per_pixel
+    scale_bar_x_start = zoom_xmax - (0.5 * window_size_px)  # Position 5% from left
+    scale_bar_y = zoom_ymin + (0.05 * window_size_px)   # Position 5% from top
+    ax[0].plot([scale_bar_x_start, scale_bar_x_start + scale_bar_length_px], [scale_bar_y, scale_bar_y], lw=7, c="black")
+    
+    # Configure the ax[0]
+    ax[0].set_xlim(zoom_xmin, zoom_xmax)
+    ax[0].set_ylim(zoom_ymin, zoom_ymax)
+    ax[0].set_aspect('equal', adjustable='box')
+    ax[0].axis('off')
+    
+    
+    # Plot the trajectory distance
+    if gradient_color and not show_interaction:
+        color_map = plt.get_cmap('viridis')
+        num_points = len(trace_df)
+        for i in range(num_points - 1):
+            frame = int(trace_df['t'].iloc[i]*10)
+            ax[1].plot(trace_df['t'].iloc[i:i+2], trace_df['distance_um'].iloc[i:i+2], lw=2, c=frame_colors[frame], alpha=0.8)
+
+    elif show_interaction:
+        y = interaction_info['min_distance_to_condensate']
+        x = interaction_info['frame'] / 10.0  # Convert to seconds assuming 10 fps
+        for i in range(len(x)-1):
+            ax[1].plot(x.iloc[i:i+2], y.iloc[i:i+2], lw=2, c=frame_colors[i], alpha=0.8)    
+        
+        ax2 = ax[1].twinx()
+        num_points = len(trace_df)
+        for i in range(num_points - 1):
+            ax2.plot(trace_df['t'].iloc[i:i+2], trace_df['distance_um'].iloc[i:i+2], lw=2, c='tab:red', alpha=0.5)            
+        
+        ylims = ax2.get_ylim()
+        ax[1].set_ylim(ylims)
+        ax2.tick_params(axis='y', labelcolor='tab:red', labelsize=10)
+        ax2.set_ylabel("Distance (μm) by bulk analysis", color='tab:red', fontsize=12)
+    else:
+        ax[1].plot(trace_df['t'], trace_df['distance_um'], lw=2, c='grey', alpha=0.8)
+    
+    ax[1].set_xlabel("Time (s)", fontsize=12)
+    ax[1].set_ylabel("Distance (μm)", fontsize=12)
+    
+    ax[1].tick_params(axis='both', which='major', labelsize=10)
+    ax[1].axhline(y=0, color='gray', linestyle='--', lw=1)
+    ax[1].set_xlim(0, trace_df['t'].max())
+    
+    if title is not None:
+        fig.suptitle(title, fontsize=16)
+
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', transparent=True)
+    plt.show()
+
+
+
     
     
 import matplotlib.animation as animation

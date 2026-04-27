@@ -22,28 +22,28 @@ from util.color_palette import *
 common_time = np.linspace(0, 20, 100)  # Common time vector for interpolation
 
 
-def create_synthetic_data():
-    """Generates a few types of trajectories for demonstration."""
-    if not os.path.exists('sample_trajectories'):
-        os.makedirs('sample_trajectories')
+# def create_synthetic_data():
+#     """Generates a few types of trajectories for demonstration."""
+#     if not os.path.exists('sample_trajectories'):
+#         os.makedirs('sample_trajectories')
     
-    # Type 1: Stays low
-    for i in range(20):
-        time = np.linspace(0, 20, np.random.randint(50, 100))
-        distance = 0.1 + np.random.rand(len(time)) * 0.1
-        pd.DataFrame({'time': time, 'distance': distance}).to_csv(f'sample_trajectories/low_dwell_{i}.csv', index=False)
+#     # Type 1: Stays low
+#     for i in range(20):
+#         time = np.linspace(0, 20, np.random.randint(50, 100))
+#         distance = 0.1 + np.random.rand(len(time)) * 0.1
+#         pd.DataFrame({'time': time, 'distance': distance}).to_csv(f'sample_trajectories/low_dwell_{i}.csv', index=False)
 
-    # Type 2: Spikes and decays
-    for i in range(20):
-        time = np.linspace(0, 20, np.random.randint(50, 100))
-        distance = 1.2 * np.exp(-time / 5) + np.random.rand(len(time)) * 0.15
-        pd.DataFrame({'time': time, 'distance': distance}).to_csv(f'sample_trajectories/spike_decay_{i}.csv', index=False)
+#     # Type 2: Spikes and decays
+#     for i in range(20):
+#         time = np.linspace(0, 20, np.random.randint(50, 100))
+#         distance = 1.2 * np.exp(-time / 5) + np.random.rand(len(time)) * 0.15
+#         pd.DataFrame({'time': time, 'distance': distance}).to_csv(f'sample_trajectories/spike_decay_{i}.csv', index=False)
         
-    # Type 3: Noisy and high
-    for i in range(20):
-        time = np.linspace(0, 20, np.random.randint(50, 100))
-        distance = 0.6 + np.random.rand(len(time)) * 0.4
-        pd.DataFrame({'time': time, 'distance': distance}).to_csv(f'sample_trajectories/noisy_high_{i}.csv', index=False)
+#     # Type 3: Noisy and high
+#     for i in range(20):
+#         time = np.linspace(0, 20, np.random.randint(50, 100))
+#         distance = 0.6 + np.random.rand(len(time)) * 0.4
+#         pd.DataFrame({'time': time, 'distance': distance}).to_csv(f'sample_trajectories/noisy_high_{i}.csv', index=False)
 
 
 ################################################
@@ -949,32 +949,46 @@ def perform_clustering(data_matrix,
 
         file_savename = f"{data_name}.{savefig_format}"
         # Plot the cluster
-        plot_clustering(embedding,
-                        cluster_labels,
-                        cluster_df,
-                        color_map,
-                        legend=legend,
-                        savefig_format=savefig_format,
-                        save_path=f'result/cluster_img/{file_savename}',)
-    
-        # --- Plot 2: The Trajectories Colored by Cluster ---
-        plot_trajectories(cluster_labels,
-                          traces,
-                          cluster_df,
-                          color_map,
-                          t_max,
-                          smooth=False,
-                          plot_representatives=plot_representatives,
-                          n_rows_cols=n_rows_cols,
-                          savefig_format=savefig_format,
-                          save_path=f'result/cluster_trajectories/{file_savename}')
-        
-        # --- Plot 3: The Combined Trajectories ---
-        plot_combined_trajectories(cluster_labels,
-                                   cluster_df,
-                                   color_map,
-                                   t_max,
-                                   savefig_format=savefig_format,
-                                   save_path=f'result/combined_trajectories/{file_savename}')
+        print(f"Plotting UMAP cluster plot for {data_name} with t_max={t_max} seconds...")
+        try:
+            plot_clustering(embedding,
+                            cluster_labels,
+                            cluster_df,
+                            color_map,
+                            legend=legend,
+                            savefig_format=savefig_format,
+                            save_path=f'result/cluster_img/{file_savename}',)
 
+            print(f"Saved UMAP cluster plot to result/cluster_img/{file_savename}")
+        except Exception as e:
+            print(f"Error plotting UMAP cluster plot: {e}")
+        print(f"Plotting trajectories for each cluster with t_max={t_max} seconds...")
+        # --- Plot 2: The Trajectories Colored by Cluster ---
+        try:
+            plot_trajectories(cluster_labels,
+                            traces,
+                            cluster_df,
+                            color_map,
+                            t_max,
+                            smooth=False,
+                            plot_representatives=plot_representatives,
+                            n_rows_cols=n_rows_cols,
+                            savefig_format=savefig_format,
+                            save_path=f'result/cluster_trajectories/{file_savename}')
+            print(f"Saved cluster trajectories plot to result/cluster_trajectories/{file_savename}")
+        except Exception as e:
+            print(f"Error plotting trajectories: {e}")
+        
+        try:
+            print(f"Plotting combined trajectories for each cluster with t_max={t_max} seconds...")
+            # --- Plot 3: The Combined Trajectories ---
+            plot_combined_trajectories(cluster_labels,
+                                    cluster_df,
+                                    color_map,
+                                    t_max,
+                                    savefig_format=savefig_format,
+                                    save_path=f'result/combined_trajectories/{file_savename}')
+        except Exception as e:
+            print(f"Error plotting combined trajectories: {e}")
+            
     return cluster_labels, embedding, cluster_df
